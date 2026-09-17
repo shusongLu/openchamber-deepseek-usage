@@ -2,6 +2,14 @@
 
 OpenChamber 扩展：右侧栏面板显示 DeepSeek 余额、用量和峰谷计费状态。
 
+## 界面
+
+| 深色 | 浅色 |
+| --- | --- |
+| ![深色](docs/panel-dark.jpg) | ![浅色](docs/panel-light.jpg) |
+
+> 截图为 mock 预览数据（`?mock=1`），实际显示本机真实数据。
+
 ## 功能
 
 - **余额**：DeepSeek 官方 `/user/balance`（读取本机 key，无需配置）

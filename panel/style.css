@@ -1,0 +1,219 @@
+:root {
+  color-scheme: light dark;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+}
+
+body {
+  font:
+    13px/1.55 system-ui,
+    -apple-system,
+    "Segoe UI",
+    "Microsoft YaHei",
+    sans-serif;
+  padding: 12px 12px 20px;
+  color: inherit;
+}
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.muted {
+  opacity: 0.62;
+}
+
+.small {
+  font-size: 11px;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.card {
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  border-radius: 8px;
+  padding: 8px 10px;
+  min-width: 0;
+}
+
+.card.wide {
+  grid-column: 1 / -1;
+}
+
+.card .k {
+  font-size: 11px;
+  opacity: 0.62;
+  margin-bottom: 2px;
+}
+
+.card .v {
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card .sub {
+  font-size: 11px;
+  opacity: 0.62;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 10px;
+}
+
+.stat {
+  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  border-radius: 8px;
+  padding: 6px 9px;
+  min-width: 0;
+}
+
+.stat .v {
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stat .k {
+  font-size: 11px;
+  opacity: 0.62;
+}
+
+.section {
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.72;
+  letter-spacing: 0.02em;
+  margin-top: 2px;
+}
+
+.days {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.day {
+  display: grid;
+  grid-template-columns: 44px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.day .bar-track {
+  height: 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  overflow: hidden;
+}
+
+.day .bar {
+  height: 100%;
+  border-radius: 3px;
+  background: color-mix(in srgb, currentColor 45%, transparent);
+}
+
+.day .val {
+  font-size: 11px;
+  opacity: 0.8;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.day.today .val {
+  font-weight: 700;
+  opacity: 1;
+}
+
+.pricing {
+  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.pricing summary {
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.72;
+}
+
+.pricing table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pricing th,
+.pricing td {
+  text-align: right;
+  padding: 2px 0;
+  font-weight: 400;
+}
+
+.pricing th:first-child,
+.pricing td:first-child {
+  text-align: left;
+}
+
+.pricing th {
+  font-size: 11px;
+  opacity: 0.55;
+  font-weight: 500;
+}
+
+.foot {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-top: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+  padding-top: 8px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.mono {
+  font-family: ui-monospace, Consolas, monospace;
+}

@@ -1,20 +1,20 @@
 {
   "name": "openchamber-deepseek-usage",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "DeepSeek 余额、用量与峰谷计费面板（OpenChamber 扩展）",
   "scripts": {
     "build": "node build.mjs"
   },
   "devDependencies": {
-    "@openchamber/sdk": "1.24.0",
+    "@openchamber/sdk": "1.24.1",
     "@types/node": "^24.0.0",
     "esbuild": "^0.25.0",
     "typescript": "^5.9.0"
   },
   "openchamber": {
     "apiVersion": 1,
-    "engines": { "openchamber": ">=1.24.0" },
+    "engines": { "openchamber": ">=1.24.1" },
     "contributes": {
       "panel": {
         "id": "deepseek-usage",
@@ -22,10 +22,22 @@
         "icon": "icon.svg",
         "entry": "panel/index.html"
       },
+      "background": {
+        "entry": "background/index.html"
+      },
       "service": {
         "entry": "service/main.js",
         "runtime": "host"
       },
+      "actions": [
+        {
+          "id": "message-cost",
+          "label": "本条 DeepSeek 费用",
+          "where": "message",
+          "mode": "background",
+          "roles": ["assistant"]
+        }
+      ],
       "attach": false
     }
   }

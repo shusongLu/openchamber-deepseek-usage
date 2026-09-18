@@ -608,6 +608,71 @@ const server = createServer((req, res) => {
         sendJson(res, 200, await buildSummary(days, sessionId));
         return;
       }
+      if (url.pathname === '/message') {
+        const id = (url.searchParams.get('id') || '').trim();
+        if (!/^[A-Za-z0-9_-]{1,80}$/.test(id)) {
+          sendJson(res, 400, { ok: false, error: 'bad-id' });
+          return;
+        }
+        const dbPath = findDb();
+        if (!dbPath) {
+          sendJson(res, 404, { ok: false, error: 'db-not-found' });
+          return;
+        }
+        const db = new DatabaseSync(dbPath, { readOnly: true });
+        let row: Record<string, unknown> | undefined;
+        try {
+          row = db
+            .prepare(
+              `SELECT session_id AS sid,
+                      time_created AS ts,
+                      json_extract(data,'$.role') AS role,
+                      json_extract(data,'$.modelID') AS model,
+                      json_extract(data,'$.providerID') AS provider,
+                      json_extract(data,'$.tokens.input') AS input,
+                      json_extract(data,'$.tokens.output') AS output,
+                      json_extract(data,'$.tokens.reasoning') AS reasoning,
+                      json_extract(data,'$.tokens.cache.read') AS cache_read,
+                      json_extract(data,'$.tokens.cache.write') AS cache_write,
+                      json_extract(data,'$.cost') AS cost
+               FROM message WHERE id = ?`,
+            )
+            .get(id) as Record<string, unknown> | undefined;
+        } finally {
+          db.close();
+        }
+        if (!row || row.role !== 'assistant' || !row.model) {
+          sendJson(res, 404, { ok: false, error: 'not-found' });
+          return;
+        }
+        const ts = num(row.ts);
+        const tokens: Tokens = {
+          input: num(row.input),
+          output: num(row.output),
+          reasoning: num(row.reasoning),
+          cacheRead: num(row.cache_read),
+          cacheWrite: num(row.cache_write),
+        };
+        const peak = ts ? isPeak(new Date(ts)) : false;
+        const tier = tierOf(String(row.model));
+        const official = messageOfficialCost(tokens, tier, peak);
+        const fx = await getFxRate();
+        sendJson(res, 200, {
+          ok: true,
+          id,
+          sessionId: row.sid,
+          ts,
+          model: String(row.model),
+          provider: row.provider ?? null,
+          tier,
+          peak,
+          tokens,
+          official,
+          cost: num(row.cost) * fx.rate,
+          fx: { usdCny: Number(fx.rate.toFixed(4)), source: fx.source },
+        });
+        return;
+      }
       if (url.pathname === '/balance') {
         sendJson(res, 200, await getBalance());
         return;

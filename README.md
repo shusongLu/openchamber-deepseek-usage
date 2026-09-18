@@ -21,6 +21,7 @@ OpenChamber 扩展：右侧栏面板显示 DeepSeek 余额、用量和峰谷计�
   - 今日 / 近 7 天 / 近 30 天：请求数、输入（未命中）、缓存命中、输出（含推理）
   - 官方价估算（按每条消息的实际峰谷时段重算）与 OpenCode 记账值对比
   - 按日柱状、按模型明细（flash / v4-pro / 历史模型名）
+- **消息菜单**：任意 DeepSeek 助手回复的 `...` 菜单里有「**本条 DeepSeek 费用**」——按该消息发生时刻的峰谷价算官方费用，弹 toast（带复制按钮），不打开面板
 - 面板 60 秒自动刷新，可手动刷新
 
 ## 安装
@@ -40,7 +41,7 @@ OpenChamber 扩展：右侧栏面板显示 DeepSeek 余额、用量和峰谷计�
 
 ```bash
 npm install
-npm run build        # 生成 panel/main.js 与 service/main.js
+npm run build        # 生成 panel/main.js、background/main.js 与 service/main.js
 node tools/preview.mjs
 # 浏览器打开 http://127.0.0.1:5311/panel/index.html?mock=1&theme=dark
 ```

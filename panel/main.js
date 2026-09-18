@@ -45,6 +45,8 @@
   var GUEST_FILE_STAT_KINDS = ["file", "directory", "other", "missing"];
   var isStartSessionResult = (value) => Boolean(value && "sessionId" in value);
   var isPromptResult = (value) => Boolean(value && "sent" in value && !("sessionId" in value));
+  var GUEST_TOAST_MAX = 500;
+  var GUEST_CLIPBOARD_TEXT_MAX = 32e3;
   var GUEST_COMPOSE_TEXT_MAX = 16e3;
   var GUEST_ATTACH_ID_MAX = 128;
   var GUEST_ATTACH_TITLE_MAX = 200;
@@ -190,7 +192,8 @@
     "settings",
     "session-lifecycle",
     "item",
-    "resolve"
+    "resolve",
+    "action"
   ]);
   var asWireRecord = (data) => Object(data) === data ? data : null;
   var isNonEmptyString = (value) => String(value) === value && value.length > 0;
@@ -264,6 +267,7 @@
     const settingsListeners = /* @__PURE__ */ new Set();
     const itemListeners = /* @__PURE__ */ new Set();
     let resolveHandler = null;
+    let actionHandler = null;
     const pending = /* @__PURE__ */ new Map();
     const workspaceListeners = /* @__PURE__ */ new Map();
     let disposed = false;
@@ -361,6 +365,28 @@
           lastReady = { ...lastReady, item: message.payload.item };
         }
         emit(itemListeners, message.payload.item);
+        return;
+      }
+      if (message.type === "action") {
+        const answer = (payload) => {
+          if (!disposed)
+            post({
+              channel: OPENCHAMBER_SDK_CHANNEL,
+              v: OPENCHAMBER_SDK_API_VERSION,
+              type: "action-result",
+              id: message.id,
+              payload
+            });
+        };
+        const handler = actionHandler;
+        if (!handler) {
+          answer({ ok: false, error: "This extension does not handle background actions." });
+          return;
+        }
+        Promise.resolve().then(() => handler(message.payload)).then(() => answer({ ok: true }), (error) => {
+          const text = (error instanceof Error ? error.message : String(error)).trim();
+          answer({ ok: false, error: (text || "Action failed.").slice(0, GUEST_RESOLVE_ERROR_MAX) });
+        });
         return;
       }
       if (message.type === "resolve") {
@@ -464,6 +490,13 @@
       return result;
     };
     return {
+      onAction: (handler) => {
+        actionHandler = handler;
+        return () => {
+          if (actionHandler === handler)
+            actionHandler = null;
+        };
+      },
       listProjects: async () => {
         const result = await readWorkspace({ kind: "projects" });
         if (result.kind !== "projects")
@@ -579,13 +612,22 @@
             resolveHandler = null;
         };
       },
-      toast: (payload) => request({
-        channel: OPENCHAMBER_SDK_CHANNEL,
-        v: OPENCHAMBER_SDK_API_VERSION,
-        type: "toast",
-        id: nextId(ids),
-        payload
-      }),
+      toast: (payload) => {
+        const message = payload.message.trim();
+        if (!message || message.length > GUEST_TOAST_MAX) {
+          return Promise.reject(new HostRequestError("HOST_REJECTED", `Toast message must contain 1 to ${GUEST_TOAST_MAX} characters.`));
+        }
+        if (payload.copy && payload.copy !== true && (!payload.copy.text.length || payload.copy.text.length > GUEST_CLIPBOARD_TEXT_MAX)) {
+          return Promise.reject(new HostRequestError("HOST_REJECTED", `Toast copy text must contain 1 to ${GUEST_CLIPBOARD_TEXT_MAX} characters.`));
+        }
+        return request({
+          channel: OPENCHAMBER_SDK_CHANNEL,
+          v: OPENCHAMBER_SDK_API_VERSION,
+          type: "toast",
+          id: nextId(ids),
+          payload: { ...payload, message }
+        });
+      },
       openUrl: (url) => request({
         channel: OPENCHAMBER_SDK_CHANNEL,
         v: OPENCHAMBER_SDK_API_VERSION,
@@ -820,6 +862,7 @@
         workspaceListeners.clear();
         disposed = true;
         resolveHandler = null;
+        actionHandler = null;
         target.removeEventListener("message", onMessage);
         for (const waiter of pending.values()) {
           clearTimeout(waiter.timer);

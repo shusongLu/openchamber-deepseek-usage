@@ -1632,6 +1632,9 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
       })
     );
   }
+  function shortModel(model) {
+    return model.replace(/^deepseek-/, "").replace("v4.1-flash-expires-on-0910", "v4.1-flash-exp").replace("v4-flash-vision-exp", "v4-flash-vision");
+  }
   function renderModels(s) {
     const list = (s.models ?? []).slice(0, 8);
     if (list.length === 0) {
@@ -1640,10 +1643,12 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
     }
     modelsList.replaceChildren(
       ...list.map((m) => {
-        const row = el2("div", "day");
+        const row = el2("div", "model");
+        const name = el2("div", "name", shortModel(m.model));
+        name.title = m.model;
         row.append(
-          el2("div", "small", m.model.replace(/^deepseek-/, "")),
-          el2("div", "small muted", m.tier ? `${m.tier} \xB7 ${fmtInt(m.requests)} \u6B21` : `${fmtInt(m.requests)} \u6B21`),
+          name,
+          el2("div", "meta", m.tier ? `${m.tier} \xB7 ${fmtInt(m.requests)} \u6B21` : `${fmtInt(m.requests)} \u6B21`),
           el2("div", "val", fmtCny(m.official))
         );
         return row;
@@ -1909,8 +1914,11 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
       totals: { requests: totals.requests, tokens: totals.tokens, cost: totals.cost, official: totals.official },
       today: days2[days2.length - 1] ?? null,
       models: [
-        { model: "deepseek-flash", tier: "flash", requests: 144, tokens: totals.tokens, cost: totals.cost * 0.7, official: totals.official * 0.7, peakOfficial: 0, offOfficial: 0, date: "" },
-        { model: "deepseek-v4-pro", tier: "pro", requests: 13, tokens: totals.tokens, cost: totals.cost * 0.3, official: totals.official * 0.3, peakOfficial: 0, offOfficial: 0, date: "" }
+        { model: "deepseek-v4-flash", tier: "flash", requests: 9893, tokens: totals.tokens, cost: totals.cost * 0.6, official: 181.6, peakOfficial: 0, offOfficial: 0, date: "" },
+        { model: "deepseek-flash", tier: "flash", requests: 4218, tokens: totals.tokens, cost: totals.cost * 0.3, official: 103.4, peakOfficial: 0, offOfficial: 0, date: "" },
+        { model: "deepseek-v4-pro", tier: "pro", requests: 152, tokens: totals.tokens, cost: totals.cost * 0.07, official: 22.69, peakOfficial: 0, offOfficial: 0, date: "" },
+        { model: "deepseek-v4.1-flash-expires-on-0910", tier: "flash", requests: 885, tokens: totals.tokens, cost: totals.cost * 0.05, official: 14.84, peakOfficial: 0, offOfficial: 0, date: "" },
+        { model: "deepseek-v4-flash-vision-exp", tier: "flash", requests: 5, tokens: totals.tokens, cost: totals.cost * 1e-3, official: 0.209, peakOfficial: 0, offOfficial: 0, date: "" }
       ],
       days: days2,
       notes: ["\u5B98\u65B9\u4EF7\u6309\u4EBA\u6C11\u5E01\u4EF7\u76EE\u4E0E\u5CF0\u8C37\u65F6\u6BB5\u9010\u6761\u91CD\u7B97\uFF1B\u7F13\u5B58\u5199\u5165\u4E0D\u8BA1\u8D39\uFF1BOpenCode \u8BB0\u8D26\u6309 USD\u2192CNY \u6298\u7B97"]

@@ -350,6 +350,13 @@ function renderDays(s: Summary): void {
   );
 }
 
+function shortModel(model: string): string {
+  return model
+    .replace(/^deepseek-/, '')
+    .replace('v4.1-flash-expires-on-0910', 'v4.1-flash-exp')
+    .replace('v4-flash-vision-exp', 'v4-flash-vision');
+}
+
 function renderModels(s: Summary): void {
   const list = (s.models ?? []).slice(0, 8);
   if (list.length === 0) {
@@ -358,10 +365,12 @@ function renderModels(s: Summary): void {
   }
   modelsList.replaceChildren(
     ...list.map((m) => {
-      const row = el('div', 'day');
+      const row = el('div', 'model');
+      const name = el('div', 'name', shortModel(m.model));
+      name.title = m.model;
       row.append(
-        el('div', 'small', m.model.replace(/^deepseek-/, '')),
-        el('div', 'small muted', m.tier ? `${m.tier} · ${fmtInt(m.requests)} 次` : `${fmtInt(m.requests)} 次`),
+        name,
+        el('div', 'meta', m.tier ? `${m.tier} · ${fmtInt(m.requests)} 次` : `${fmtInt(m.requests)} 次`),
         el('div', 'val', fmtCny(m.official)),
       );
       return row;
@@ -644,8 +653,11 @@ function mockSummary(): Summary {
     totals: { requests: totals.requests, tokens: totals.tokens, cost: totals.cost, official: totals.official },
     today: days[days.length - 1] ?? null,
     models: [
-      { model: 'deepseek-flash', tier: 'flash', requests: 144, tokens: totals.tokens, cost: totals.cost * 0.7, official: totals.official * 0.7, peakOfficial: 0, offOfficial: 0, date: '' },
-      { model: 'deepseek-v4-pro', tier: 'pro', requests: 13, tokens: totals.tokens, cost: totals.cost * 0.3, official: totals.official * 0.3, peakOfficial: 0, offOfficial: 0, date: '' },
+      { model: 'deepseek-v4-flash', tier: 'flash', requests: 9893, tokens: totals.tokens, cost: totals.cost * 0.6, official: 181.6, peakOfficial: 0, offOfficial: 0, date: '' },
+      { model: 'deepseek-flash', tier: 'flash', requests: 4218, tokens: totals.tokens, cost: totals.cost * 0.3, official: 103.4, peakOfficial: 0, offOfficial: 0, date: '' },
+      { model: 'deepseek-v4-pro', tier: 'pro', requests: 152, tokens: totals.tokens, cost: totals.cost * 0.07, official: 22.69, peakOfficial: 0, offOfficial: 0, date: '' },
+      { model: 'deepseek-v4.1-flash-expires-on-0910', tier: 'flash', requests: 885, tokens: totals.tokens, cost: totals.cost * 0.05, official: 14.84, peakOfficial: 0, offOfficial: 0, date: '' },
+      { model: 'deepseek-v4-flash-vision-exp', tier: 'flash', requests: 5, tokens: totals.tokens, cost: totals.cost * 0.001, official: 0.209, peakOfficial: 0, offOfficial: 0, date: '' },
     ],
     days,
     notes: ['官方价按人民币价目与峰谷时段逐条重算；缓存写入不计费；OpenCode 记账按 USD→CNY 折算'],

@@ -1,6 +1,6 @@
 {
   "name": "openchamber-deepseek-usage",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "DeepSeek 余额、用量与峰谷计费面板（OpenChamber 扩展）",
   "scripts": {

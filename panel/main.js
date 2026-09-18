@@ -1456,6 +1456,7 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
   var sessionK = el2("div", "k", "\u5F53\u524D\u4F1A\u8BDD");
   var sessionV = el2("div", "v", "\u2014");
   var sessionS = el2("div", "sub");
+  var sessionT = el2("div", "sub");
   var balCard = el2("div", "card");
   var balK = el2("div", "k", "\u4F59\u989D");
   var balV = el2("div", "v", "\u2014");
@@ -1476,7 +1477,7 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
   var foot = el2("div", "foot small muted");
   balCard.append(balK, balV, balS);
   todayCard.append(todayK, todayV, todayS);
-  sessionCard.append(sessionK, sessionV, sessionS);
+  sessionCard.append(sessionK, sessionV, sessionS, sessionT);
   cards.append(sessionCard, balCard, todayCard);
   headRight.append(updated, refreshSlot);
   head.append(title, headRight);
@@ -1509,6 +1510,18 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
   function localDateStr(d) {
     const p = (n) => String(n).padStart(2, "0");
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  }
+  function fmtDateTime(ms) {
+    const d = new Date(ms);
+    const p = (n) => String(n).padStart(2, "0");
+    return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+  function fmtDuration(ms) {
+    const s = Math.max(0, Math.floor(ms / 1e3));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor(s % 3600 / 60);
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
   }
   async function loadData() {
     if (MOCK) return mockSummary();
@@ -1680,15 +1693,24 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
     if (!sess) {
       sessionV.textContent = "\u2014";
       sessionS.textContent = "\u672A\u5728\u4F1A\u8BDD\u4E2D";
+      sessionT.textContent = "";
       return;
     }
     if (sess.requests === 0) {
       sessionV.textContent = "\xA50";
       sessionS.textContent = "\u672C\u4F1A\u8BDD\u6682\u65E0 DeepSeek \u8C03\u7528";
+      sessionT.textContent = sess.startedAt ? `\u5F00\u59CB ${fmtDateTime(sess.startedAt)}` : "";
       return;
     }
     sessionV.textContent = fmtCny(sess.official);
     sessionS.textContent = `\u4E3B\u4F1A\u8BDD ${fmtCny(sess.main.official)} \xB7 \u5B50\u4EE3\u7406 ${fmtCny(sess.children.official)} \xB7 ${fmtInt(sess.requests)} \u6B21 \xB7 ${fmtTokens(totalTokens(sess.tokens))} tokens`;
+    const bits = [];
+    if (sess.startedAt) bits.push(`\u5F00\u59CB ${fmtDateTime(sess.startedAt)}\uFF08${fmtDuration(Date.now() - sess.startedAt)}\uFF09`);
+    if (sess.lastMessageAt) bits.push(`\u6700\u8FD1\u8C03\u7528 ${fmtDateTime(sess.lastMessageAt)}`);
+    if (sess.peakOfficial > 0 || sess.offOfficial > 0) {
+      bits.push(`\u5CF0 ${fmtCny(sess.peakOfficial)} / \u8C37 ${fmtCny(sess.offOfficial)}`);
+    }
+    sessionT.textContent = bits.join(" \xB7 ");
   }
   function renderAll(s) {
     lastSummary = s;
@@ -1862,6 +1884,8 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
       },
       session: {
         id: "ses_mock",
+        startedAt: now - 3.5 * 36e5,
+        lastMessageAt: now - 4 * 6e4,
         requests: 38,
         tokens: { input: 20700, output: 7e3, reasoning: 2400, cacheRead: 2e6, cacheWrite: 0 },
         official: 4.1,

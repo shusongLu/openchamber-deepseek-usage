@@ -42,6 +42,8 @@ interface SessionSide {
 
 interface SessionAgg extends SessionSide {
   id: string;
+  startedAt: number;
+  lastMessageAt: number | null;
   peakOfficial: number;
   offOfficial: number;
   main: SessionSide;
@@ -126,6 +128,7 @@ const sessionCard = el('div', 'card wide');
 const sessionK = el('div', 'k', '当前会话');
 const sessionV = el('div', 'v', '—');
 const sessionS = el('div', 'sub');
+const sessionT = el('div', 'sub');
 const balCard = el('div', 'card');
 const balK = el('div', 'k', '余额');
 const balV = el('div', 'v', '—');
@@ -147,7 +150,7 @@ const foot = el('div', 'foot small muted');
 
 balCard.append(balK, balV, balS);
 todayCard.append(todayK, todayV, todayS);
-sessionCard.append(sessionK, sessionV, sessionS);
+sessionCard.append(sessionK, sessionV, sessionS, sessionT);
 cards.append(sessionCard, balCard, todayCard);
 headRight.append(updated, refreshSlot);
 head.append(title, headRight);
@@ -191,6 +194,20 @@ const symbolOf = (currency?: string | null): string =>
 function localDateStr(d: Date): string {
   const p = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+function fmtDateTime(ms: number): string {
+  const d = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function fmtDuration(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
 }
 
 // ---------------------------------------------------------------- 数据
@@ -397,17 +414,26 @@ function renderSession(s: Summary): void {
   if (!sess) {
     sessionV.textContent = '—';
     sessionS.textContent = '未在会话中';
+    sessionT.textContent = '';
     return;
   }
   if (sess.requests === 0) {
     sessionV.textContent = '¥0';
     sessionS.textContent = '本会话暂无 DeepSeek 调用';
+    sessionT.textContent = sess.startedAt ? `开始 ${fmtDateTime(sess.startedAt)}` : '';
     return;
   }
   sessionV.textContent = fmtCny(sess.official);
   sessionS.textContent =
     `主会话 ${fmtCny(sess.main.official)} · 子代理 ${fmtCny(sess.children.official)} · ` +
     `${fmtInt(sess.requests)} 次 · ${fmtTokens(totalTokens(sess.tokens))} tokens`;
+  const bits: string[] = [];
+  if (sess.startedAt) bits.push(`开始 ${fmtDateTime(sess.startedAt)}（${fmtDuration(Date.now() - sess.startedAt)}）`);
+  if (sess.lastMessageAt) bits.push(`最近调用 ${fmtDateTime(sess.lastMessageAt)}`);
+  if (sess.peakOfficial > 0 || sess.offOfficial > 0) {
+    bits.push(`峰 ${fmtCny(sess.peakOfficial)} / 谷 ${fmtCny(sess.offOfficial)}`);
+  }
+  sessionT.textContent = bits.join(' · ');
 }
 
 function renderAll(s: Summary): void {
@@ -593,6 +619,8 @@ function mockSummary(): Summary {
     },
     session: {
       id: 'ses_mock',
+      startedAt: now - 3.5 * 3600_000,
+      lastMessageAt: now - 4 * 60_000,
       requests: 38,
       tokens: { input: 20_700, output: 7_000, reasoning: 2_400, cacheRead: 2_000_000, cacheWrite: 0 },
       official: 4.1,

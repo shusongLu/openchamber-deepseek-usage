@@ -191,8 +191,8 @@ function emptySide() {
 function aggregateSession(dbPath, sessionId) {
   const db = new import_node_sqlite.DatabaseSync(dbPath, { readOnly: true });
   try {
-    const exists = db.prepare("SELECT 1 AS ok FROM session WHERE id = ?").get(sessionId);
-    if (!exists) return null;
+    const meta = db.prepare("SELECT time_created AS created, time_updated AS updated FROM session WHERE id = ?").get(sessionId);
+    if (!meta) return null;
     const rows = db.prepare(
       `WITH RECURSIVE tree(id) AS (
            SELECT id FROM session WHERE id = ?
@@ -214,6 +214,8 @@ function aggregateSession(dbPath, sessionId) {
     ).all(sessionId);
     const agg = {
       id: sessionId,
+      startedAt: num(meta.created),
+      lastMessageAt: null,
       ...emptySide(),
       peakOfficial: 0,
       offOfficial: 0,
@@ -233,6 +235,7 @@ function aggregateSession(dbPath, sessionId) {
       const cost = num(row.cost);
       const official = messageOfficialCost(tokens, tierOf(String(row.model ?? "")), peak);
       const side = String(row.sid) === sessionId ? agg.main : agg.children;
+      if (ts && (agg.lastMessageAt === null || ts > agg.lastMessageAt)) agg.lastMessageAt = ts;
       agg.requests += 1;
       addTokens(agg.tokens, tokens);
       agg.cost += cost;

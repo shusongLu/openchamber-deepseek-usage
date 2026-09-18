@@ -300,6 +300,8 @@ interface SessionSide {
 
 interface SessionAgg extends SessionSide {
   id: string;
+  startedAt: number;
+  lastMessageAt: number | null;
   peakOfficial: number;
   offOfficial: number;
   main: SessionSide;
@@ -313,8 +315,10 @@ function emptySide(): SessionSide {
 function aggregateSession(dbPath: string, sessionId: string): SessionAgg | null {
   const db = new DatabaseSync(dbPath, { readOnly: true });
   try {
-    const exists = db.prepare('SELECT 1 AS ok FROM session WHERE id = ?').get(sessionId);
-    if (!exists) return null;
+    const meta = db
+      .prepare('SELECT time_created AS created, time_updated AS updated FROM session WHERE id = ?')
+      .get(sessionId) as { created?: unknown; updated?: unknown } | undefined;
+    if (!meta) return null;
 
     const rows = db
       .prepare(
@@ -340,6 +344,8 @@ function aggregateSession(dbPath: string, sessionId: string): SessionAgg | null 
 
     const agg: SessionAgg = {
       id: sessionId,
+      startedAt: num(meta.created),
+      lastMessageAt: null,
       ...emptySide(),
       peakOfficial: 0,
       offOfficial: 0,
@@ -360,6 +366,8 @@ function aggregateSession(dbPath: string, sessionId: string): SessionAgg | null 
       const cost = num(row.cost);
       const official = messageOfficialCost(tokens, tierOf(String(row.model ?? '')), peak);
       const side = String(row.sid) === sessionId ? agg.main : agg.children;
+
+      if (ts && (agg.lastMessageAt === null || ts > agg.lastMessageAt)) agg.lastMessageAt = ts;
 
       agg.requests += 1;
       addTokens(agg.tokens, tokens);

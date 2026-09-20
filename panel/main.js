@@ -1427,7 +1427,128 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
   };
 
   // panel/main.ts
+  var L = {
+    zh: {
+      title: "DeepSeek \u7528\u91CF",
+      refresh: "\u5237\u65B0",
+      updatedAt: (time) => `\u66F4\u65B0\u4E8E ${time}`,
+      peakTitle: "\u5F53\u524D\uFF1A\u5CF0\u65F6\uFF08\u6807\u51C6\u4EF7\uFF09",
+      offTitle: "\u5F53\u524D\uFF1A\u8C37\u65F6\uFF08\u534A\u4EF7\uFF09",
+      windowBody: (local) => `\u5CF0\u65F6\u7A97\u53E3\uFF1A${local}\uFF1B\u5176\u4F59\u65F6\u95F4\u4E3A\u8C37\u65F6\uFF08\u534A\u4EF7\uFF09`,
+      dataUnavailable: (err) => `\u7528\u91CF\u6570\u636E\u4E0D\u53EF\u7528\uFF1A${err}`,
+      countdown: (time, next) => `\u8DDD\u5207\u6362 ${time} \u2192 ${next}`,
+      peak: "\u5CF0\u65F6",
+      offpeak: "\u8C37\u65F6",
+      session: "\u5F53\u524D\u4F1A\u8BDD",
+      noSession: "\u672A\u5728\u4F1A\u8BDD\u4E2D",
+      sessionEmpty: "\u672C\u4F1A\u8BDD\u6682\u65E0 DeepSeek \u8C03\u7528",
+      sessionSub: (main, children, n, tokens) => `\u4E3B\u4F1A\u8BDD ${main} \xB7 \u5B50\u4EE3\u7406 ${children} \xB7 ${n} \u6B21 \xB7 ${tokens} tokens`,
+      sessionStarted: (dt, dur) => `\u5F00\u59CB ${dt}\uFF08${dur}\uFF09`,
+      sessionLast: (dt) => `\u6700\u8FD1\u8C03\u7528 ${dt}`,
+      sessionPeakOff: (peak, off) => `\u5CF0 ${peak} / \u8C37 ${off}`,
+      balance: "\u4F59\u989D",
+      balanceSub: (top, granted, src) => `\u5145\u503C ${top} \xB7 \u8D60\u9001 ${granted}${src}`,
+      keySource: (src) => ` \xB7 key: ${src}`,
+      lowBalance: " \xB7 \u4F59\u989D\u4E0D\u8DB3",
+      noKey: "\u672A\u627E\u5230\u672C\u673A DeepSeek key\uFF08secrets / auth.json\uFF09",
+      balanceFailed: (msg) => `\u4F59\u989D\u67E5\u8BE2\u5931\u8D25\uFF1A${msg}`,
+      balanceUnavailable: "\u4F59\u989D\u4E0D\u53EF\u7528",
+      todayCost: "\u4ECA\u65E5\u8D39\u7528\uFF08\u5B98\u65B9\u4EF7\uFF09",
+      todaySub: (n, tokens) => `${n} \u6B21 \xB7 ${tokens} tokens`,
+      todayNone: "\u4ECA\u65E5\u6682\u65E0\u8C03\u7528",
+      tabToday: "\u4ECA\u65E5",
+      tab7: "\u8FD1 7 \u5929",
+      tab30: "\u8FD1 30 \u5929",
+      requests: "\u8BF7\u6C42\u6570",
+      inputMiss: "\u8F93\u5165\uFF08\u672A\u547D\u4E2D\uFF09",
+      cacheHit: "\u7F13\u5B58\u547D\u4E2D",
+      output: "\u8F93\u51FA\uFF08\u542B\u63A8\u7406\uFF09",
+      official: "\u5B98\u65B9\u4EF7\u4F30\u7B97",
+      peakCost: "\u5176\u4E2D\u5CF0\u65F6",
+      offCost: "\u5176\u4E2D\u8C37\u65F6",
+      opencodeCost: "OpenCode \u8BB0\u8D26",
+      byDay: "\u6309\u65E5",
+      byModel: "\u6309\u6A21\u578B",
+      noData: "\u6682\u65E0\u6570\u636E",
+      pricing: "\u8C37\u5CF0\u4EF7\u76EE\uFF08\u5143 / 1M tokens\uFF09",
+      pricingNote: "\u683C\u5F0F\uFF1A\u8C37\u65F6 / \u5CF0\u65F6\uFF1B\u8F93\u51FA\u542B\u63A8\u7406 tokens",
+      dbMessages: (n) => `opencode.db \xB7 ${n} \u6761\u6D88\u606F`,
+      totalsLine: (tokens, cny) => `\u7D2F\u8BA1 ${tokens} tokens \xB7 ${cny}`,
+      sampled: (time) => `\u91C7\u6837 ${time}`,
+      fx: (rate, src) => `OpenCode \u8BB0\u8D26\u6309\u6C47\u7387 1 USD = \xA5${rate} \u6298\u7B97\uFF08${src}\uFF09`,
+      note: "\u5B98\u65B9\u4EF7\u6309\u4EBA\u6C11\u5E01\u4EF7\u76EE\u4E0E\u5CF0\u8C37\u65F6\u6BB5\u9010\u6761\u91CD\u7B97\uFF1B\u7F13\u5B58\u5199\u5165\u4E0D\u8BA1\u8D39\uFF1BOpenCode \u8BB0\u8D26\u6309 USD\u2192CNY \u6298\u7B97",
+      serviceDown: "\u672C\u5730\u670D\u52A1\u4E0D\u53EF\u7528",
+      serviceDownBody: (msg) => `${msg}\u3002\u8BF7\u786E\u8BA4\u6269\u5C55\u5DF2\u5141\u8BB8\u672C\u5730\u670D\u52A1\uFF0C\u7136\u540E\u91CD\u8BD5\u3002`,
+      retry: "\u91CD\u8BD5",
+      notConnected: "\u672A\u8FDE\u63A5\u5230 OpenChamber",
+      notConnectedBody: "\u8BF7\u5728 OpenChamber \u7684\u6269\u5C55\u9762\u677F\u4E2D\u6253\u5F00\u6B64\u9875\u9762\uFF1B\u5F00\u53D1\u9884\u89C8\u53EF\u52A0 ?mock=1\u3002",
+      windowLocal: "\u5317\u4EAC\u65F6\u95F4 09:00\u201312:00\u300114:00\u201318:00",
+      windowUtc: "\u5468\u4E00\u81F3\u5468\u4E94 01:00\u201304:00\u300106:00\u201310:00 UTC"
+    },
+    en: {
+      title: "DeepSeek Usage",
+      refresh: "Refresh",
+      updatedAt: (time) => `updated ${time}`,
+      peakTitle: "Now: peak hours (standard price)",
+      offTitle: "Now: off-peak (half price)",
+      windowBody: (local) => `Peak window: ${local}; all other hours are off-peak (half price)`,
+      dataUnavailable: (err) => `Usage data unavailable: ${err}`,
+      countdown: (time, next) => `switches in ${time} \u2192 ${next}`,
+      peak: "peak",
+      offpeak: "off-peak",
+      session: "Current session",
+      noSession: "No session open",
+      sessionEmpty: "No DeepSeek calls in this session yet",
+      sessionSub: (main, children, n, tokens) => `main ${main} \xB7 subagents ${children} \xB7 ${n} calls \xB7 ${tokens} tokens`,
+      sessionStarted: (dt, dur) => `started ${dt} (${dur})`,
+      sessionLast: (dt) => `last call ${dt}`,
+      sessionPeakOff: (peak, off) => `peak ${peak} / off-peak ${off}`,
+      balance: "Balance",
+      balanceSub: (top, granted, src) => `topped-up ${top} \xB7 granted ${granted}${src}`,
+      keySource: (src) => ` \xB7 key: ${src}`,
+      lowBalance: " \xB7 insufficient balance",
+      noKey: "No local DeepSeek key found (secrets / auth.json)",
+      balanceFailed: (msg) => `Balance request failed: ${msg}`,
+      balanceUnavailable: "Balance unavailable",
+      todayCost: "Today's cost (official)",
+      todaySub: (n, tokens) => `${n} calls \xB7 ${tokens} tokens`,
+      todayNone: "No calls today",
+      tabToday: "Today",
+      tab7: "Last 7 days",
+      tab30: "Last 30 days",
+      requests: "Requests",
+      inputMiss: "Input (cache miss)",
+      cacheHit: "Cache hit",
+      output: "Output (incl. reasoning)",
+      official: "Official estimate",
+      peakCost: "of which peak",
+      offCost: "of which off-peak",
+      opencodeCost: "OpenCode recorded",
+      byDay: "By day",
+      byModel: "By model",
+      noData: "No data",
+      pricing: "Peak / off-peak pricing (CNY / 1M tokens)",
+      pricingNote: "Format: off-peak / peak; output includes reasoning tokens",
+      dbMessages: (n) => `opencode.db \xB7 ${n} messages`,
+      totalsLine: (tokens, cny) => `Total ${tokens} tokens \xB7 ${cny}`,
+      sampled: (time) => `sampled ${time}`,
+      fx: (rate, src) => `OpenCode recorded converted at 1 USD = \xA5${rate} (${src})`,
+      note: "Official cost recomputed per message using the CNY price list and peak windows; cache writes are not billed; OpenCode recorded cost converted via USD\u2192CNY.",
+      serviceDown: "Local service unavailable",
+      serviceDownBody: (msg) => `${msg} Check that the extension is allowed to run its local service, then retry.`,
+      retry: "Retry",
+      notConnected: "Not connected to OpenChamber",
+      notConnectedBody: "Open this page inside OpenChamber. For a dev preview add ?mock=1.",
+      windowLocal: "Beijing time 09:00\u201312:00, 14:00\u201318:00",
+      windowUtc: "Mon\u2013Fri 01:00\u201304:00, 06:00\u201310:00 UTC"
+    }
+  };
   var MOCK = new URLSearchParams(location.search).has("mock");
+  function detectLang(locale) {
+    return locale && locale.toLowerCase().startsWith("zh") ? "zh" : "en";
+  }
+  var lang = detectLang(MOCK ? new URLSearchParams(location.search).get("lang") ?? navigator.language : navigator.language);
+  var T = () => L[lang];
   var host = connectHost();
   var root = document.querySelector("#root");
   var days = 30;
@@ -1437,6 +1558,7 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
   var activeTab = "7d";
   var countdownTarget = null;
   var currentSessionId = null;
+  var refreshHandle = null;
   var el2 = (tag, className, text) => {
     const node = document.createElement(tag);
     if (className) node.className = className;
@@ -1445,7 +1567,7 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
   };
   var wrap = el2("div", "wrap");
   var head = el2("div", "head");
-  var title = el2("div", "title", "DeepSeek \u7528\u91CF");
+  var title = el2("div", "title", T().title);
   var headRight = el2("div", "row");
   var updated = el2("div", "small muted");
   var refreshSlot = el2("div");
@@ -1453,26 +1575,26 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
   var countdownEl = el2("div", "small muted");
   var cards = el2("div", "cards");
   var sessionCard = el2("div", "card wide");
-  var sessionK = el2("div", "k", "\u5F53\u524D\u4F1A\u8BDD");
+  var sessionK = el2("div", "k", T().session);
   var sessionV = el2("div", "v", "\u2014");
   var sessionS = el2("div", "sub");
   var sessionT = el2("div", "sub");
   var balCard = el2("div", "card");
-  var balK = el2("div", "k", "\u4F59\u989D");
+  var balK = el2("div", "k", T().balance);
   var balV = el2("div", "v", "\u2014");
   var balS = el2("div", "sub");
   var todayCard = el2("div", "card");
-  var todayK = el2("div", "k", "\u4ECA\u65E5\u8D39\u7528\uFF08\u5B98\u65B9\u4EF7\uFF09");
+  var todayK = el2("div", "k", T().todayCost);
   var todayV = el2("div", "v", "\u2014");
   var todayS = el2("div", "sub");
   var tabsSlot = el2("div");
   var stats = el2("div", "grid");
-  var daysSection = el2("div", "section", "\u6309\u65E5");
+  var daysSection = el2("div", "section", T().byDay);
   var daysList = el2("div", "days");
-  var modelsSection = el2("div", "section", "\u6309\u6A21\u578B");
+  var modelsSection = el2("div", "section", T().byModel);
   var modelsList = el2("div", "days");
   var pricing = el2("details", "pricing");
-  var pricingSummary = el2("summary", void 0, "\u8C37\u5CF0\u4EF7\u76EE\uFF08\u5143 / 1M tokens\uFF09");
+  var pricingSummary = el2("summary", void 0, T().pricing);
   var pricingBody = el2("div");
   var foot = el2("div", "foot small muted");
   balCard.append(balK, balV, balS);
@@ -1564,52 +1686,48 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
   }
   function renderBanner(s) {
     const peak = s.now.isPeak;
-    const body = s.ok === false ? `\u7528\u91CF\u6570\u636E\u4E0D\u53EF\u7528\uFF1A${s.error ?? "\u672A\u77E5\u9519\u8BEF"}` : `\u5CF0\u65F6\u7A97\u53E3\uFF1A${s.window.local}\uFF1B\u5176\u4F59\u65F6\u95F4\u4E3A\u8C37\u65F6\uFF08\u534A\u4EF7\uFF09`;
+    const t = T();
+    const body = s.ok === false ? t.dataUnavailable(s.error ?? "?") : t.windowBody(t.windowLocal);
+    const title2 = peak ? t.peakTitle : t.offTitle;
     if (!bannerHandle) {
-      bannerHandle = mountBanner(bannerSlot, {
-        tone: peak ? "warning" : "success",
-        title: peak ? "\u5F53\u524D\uFF1A\u5CF0\u65F6\uFF08\u6807\u51C6\u4EF7\uFF09" : "\u5F53\u524D\uFF1A\u8C37\u65F6\uFF08\u534A\u4EF7\uFF09",
-        body
-      });
+      bannerHandle = mountBanner(bannerSlot, { tone: peak ? "warning" : "success", title: title2, body });
       return;
     }
-    bannerHandle.update({
-      tone: peak ? "warning" : "success",
-      title: peak ? "\u5F53\u524D\uFF1A\u5CF0\u65F6\uFF08\u6807\u51C6\u4EF7\uFF09" : "\u5F53\u524D\uFF1A\u8C37\u65F6\uFF08\u534A\u4EF7\uFF09",
-      body
-    });
+    bannerHandle.update({ tone: peak ? "warning" : "success", title: title2, body });
   }
   function renderBalance(s) {
+    const t = T();
     const b = s.balance;
     if (b?.ok) {
       const sym = symbolOf(b.currency);
       balV.textContent = `${sym}${b.total ?? "\u2014"}`;
-      balS.textContent = `\u5145\u503C ${sym}${b.toppedUp ?? "\u2014"} \xB7 \u8D60\u9001 ${sym}${b.granted ?? "\u2014"}` + (b.isAvailable === false ? " \xB7 \u4F59\u989D\u4E0D\u8DB3" : "") + (b.source ? ` \xB7 key: ${b.source}` : "");
+      balS.textContent = t.balanceSub(`${sym}${b.toppedUp ?? "\u2014"}`, `${sym}${b.granted ?? "\u2014"}`, b.source ? t.keySource(b.source) : "") + (b.isAvailable === false ? t.lowBalance : "");
       return;
     }
     balV.textContent = "\u2014";
-    balS.textContent = b?.reason === "no-key" ? "\u672A\u627E\u5230\u672C\u673A DeepSeek key\uFF08secrets / auth.json\uFF09" : b?.message ? `\u4F59\u989D\u67E5\u8BE2\u5931\u8D25\uFF1A${b.message}` : "\u4F59\u989D\u4E0D\u53EF\u7528";
+    balS.textContent = b?.reason === "no-key" ? t.noKey : b?.message ? t.balanceFailed(b.message) : t.balanceUnavailable;
   }
   function renderStats(s) {
+    const t = T();
     const list = windowDays(s);
     const agg = sumDays(list);
     stats.replaceChildren(
-      statCell("\u8BF7\u6C42\u6570", fmtInt(agg.requests)),
-      statCell("\u8F93\u5165\uFF08\u672A\u547D\u4E2D\uFF09", fmtTokens(agg.tokens.input)),
-      statCell("\u7F13\u5B58\u547D\u4E2D", fmtTokens(agg.tokens.cacheRead)),
-      statCell("\u8F93\u51FA\uFF08\u542B\u63A8\u7406\uFF09", fmtTokens(agg.tokens.output + agg.tokens.reasoning)),
-      statCell("\u5B98\u65B9\u4EF7\u4F30\u7B97", fmtCny(agg.official)),
-      statCell("\u5176\u4E2D\u5CF0\u65F6", fmtCny(agg.peak)),
-      statCell("\u5176\u4E2D\u8C37\u65F6", fmtCny(agg.off)),
-      statCell("OpenCode \u8BB0\u8D26", fmtCny(agg.cost))
+      statCell(t.requests, fmtInt(agg.requests)),
+      statCell(t.inputMiss, fmtTokens(agg.tokens.input)),
+      statCell(t.cacheHit, fmtTokens(agg.tokens.cacheRead)),
+      statCell(t.output, fmtTokens(agg.tokens.output + agg.tokens.reasoning)),
+      statCell(t.official, fmtCny(agg.official)),
+      statCell(t.peakCost, fmtCny(agg.peak)),
+      statCell(t.offCost, fmtCny(agg.off)),
+      statCell(t.opencodeCost, fmtCny(agg.cost))
     );
     const today = s.today ?? null;
     if (today) {
       todayV.textContent = fmtCny(today.official);
-      todayS.textContent = `${fmtInt(today.requests)} \u6B21 \xB7 ${fmtTokens(totalTokens(today.tokens))} tokens`;
+      todayS.textContent = t.todaySub(fmtInt(today.requests), fmtTokens(totalTokens(today.tokens)));
     } else {
       todayV.textContent = "\xA50.000";
-      todayS.textContent = "\u4ECA\u65E5\u6682\u65E0\u8C03\u7528";
+      todayS.textContent = t.todayNone;
     }
   }
   function renderDays(s) {
@@ -1636,9 +1754,10 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
     return model.replace(/^deepseek-/, "").replace("v4.1-flash-expires-on-0910", "v4.1-flash-exp").replace("v4-flash-vision-exp", "v4-flash-vision");
   }
   function renderModels(s) {
+    const t = T();
     const list = (s.models ?? []).slice(0, 8);
     if (list.length === 0) {
-      modelsList.replaceChildren(el2("div", "small muted", "\u6682\u65E0\u6570\u636E"));
+      modelsList.replaceChildren(el2("div", "small muted", t.noData));
       return;
     }
     modelsList.replaceChildren(
@@ -1648,74 +1767,49 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
         name.title = m.model;
         row.append(
           name,
-          el2("div", "meta", m.tier ? `${m.tier} \xB7 ${fmtInt(m.requests)} \u6B21` : `${fmtInt(m.requests)} \u6B21`),
+          el2("div", "meta", m.tier ? `${m.tier} \xB7 ${fmtInt(m.requests)}` : `${fmtInt(m.requests)}`),
           el2("div", "val", fmtCny(m.official))
         );
         return row;
       })
     );
   }
-  function renderPricing(s) {
-    if (pricingBody.childElementCount > 0) return;
-    const table = el2("table");
-    const thead = el2("thead");
-    const hr = el2("tr");
-    ["\u6863\u4F4D", "\u7F13\u5B58\u547D\u4E2D", "\u7F13\u5B58\u672A\u547D\u4E2D", "\u8F93\u51FA"].forEach((t) => hr.append(el2("th", void 0, t)));
-    thead.append(hr);
-    const tbody = el2("tbody");
-    ["flash", "pro"].forEach((tier) => {
-      const p = s.pricing?.[tier];
-      if (!p) return;
-      const tr = el2("tr");
-      tr.append(
-        el2("td", void 0, tier === "flash" ? "flash" : "v4-pro"),
-        el2("td", void 0, `\xA5${p.hitOff} / \xA5${p.hitPeak}`),
-        el2("td", void 0, `\xA5${p.missOff} / \xA5${p.missPeak}`),
-        el2("td", void 0, `\xA5${p.outOff} / \xA5${p.outPeak}`)
-      );
-      tbody.append(tr);
-    });
-    table.append(thead, tbody);
-    pricingBody.append(el2("div", "small muted", "\u683C\u5F0F\uFF1A\u8C37\u65F6 / \u5CF0\u65F6\uFF1B\u8F93\u51FA\u542B\u63A8\u7406 tokens"), table);
-  }
-  function renderFooter(s) {
-    const bits = [];
-    if (s.db) {
-      bits.push(`opencode.db \xB7 ${fmtInt(s.db.messages)} \u6761\u6D88\u606F`);
-    }
-    if (s.totals) {
-      bits.push(`\u7D2F\u8BA1 ${fmtTokens(totalTokens(s.totals.tokens))} tokens \xB7 ${fmtCny(s.totals.official)}`);
-    }
-    bits.push(`\u91C7\u6837 ${new Date(s.generatedAt).toLocaleTimeString("zh-CN", { hour12: false })}`);
-    if (s.fx) {
-      bits.push(`OpenCode \u8BB0\u8D26\u6309\u6C47\u7387 1 USD = \xA5${s.fx.usdCny} \u6298\u7B97\uFF08${s.fx.source}\uFF09`);
-    }
-    foot.replaceChildren(el2("div", void 0, bits.join(" \xB7 ")));
-    if (s.notes && s.notes.length > 0) foot.append(el2("div", void 0, s.notes.join("\uFF1B")));
-  }
   function renderSession(s) {
+    const t = T();
     const sess = s.session ?? null;
     if (!sess) {
       sessionV.textContent = "\u2014";
-      sessionS.textContent = "\u672A\u5728\u4F1A\u8BDD\u4E2D";
+      sessionS.textContent = t.noSession;
       sessionT.textContent = "";
       return;
     }
     if (sess.requests === 0) {
       sessionV.textContent = "\xA50";
-      sessionS.textContent = "\u672C\u4F1A\u8BDD\u6682\u65E0 DeepSeek \u8C03\u7528";
-      sessionT.textContent = sess.startedAt ? `\u5F00\u59CB ${fmtDateTime(sess.startedAt)}` : "";
+      sessionS.textContent = t.sessionEmpty;
+      sessionT.textContent = sess.startedAt ? t.sessionStarted(fmtDateTime(sess.startedAt), fmtDuration(Date.now() - sess.startedAt)) : "";
       return;
     }
     sessionV.textContent = fmtCny(sess.official);
-    sessionS.textContent = `\u4E3B\u4F1A\u8BDD ${fmtCny(sess.main.official)} \xB7 \u5B50\u4EE3\u7406 ${fmtCny(sess.children.official)} \xB7 ${fmtInt(sess.requests)} \u6B21 \xB7 ${fmtTokens(totalTokens(sess.tokens))} tokens`;
+    sessionS.textContent = t.sessionSub(
+      fmtCny(sess.main.official),
+      fmtCny(sess.children.official),
+      fmtInt(sess.requests),
+      fmtTokens(totalTokens(sess.tokens))
+    );
     const bits = [];
-    if (sess.startedAt) bits.push(`\u5F00\u59CB ${fmtDateTime(sess.startedAt)}\uFF08${fmtDuration(Date.now() - sess.startedAt)}\uFF09`);
-    if (sess.lastMessageAt) bits.push(`\u6700\u8FD1\u8C03\u7528 ${fmtDateTime(sess.lastMessageAt)}`);
-    if (sess.peakOfficial > 0 || sess.offOfficial > 0) {
-      bits.push(`\u5CF0 ${fmtCny(sess.peakOfficial)} / \u8C37 ${fmtCny(sess.offOfficial)}`);
-    }
+    if (sess.startedAt) bits.push(t.sessionStarted(fmtDateTime(sess.startedAt), fmtDuration(Date.now() - sess.startedAt)));
+    if (sess.lastMessageAt) bits.push(t.sessionLast(fmtDateTime(sess.lastMessageAt)));
+    if (sess.peakOfficial > 0 || sess.offOfficial > 0) bits.push(t.sessionPeakOff(fmtCny(sess.peakOfficial), fmtCny(sess.offOfficial)));
     sessionT.textContent = bits.join(" \xB7 ");
+  }
+  function renderFooter(s) {
+    const t = T();
+    const bits = [];
+    if (s.db) bits.push(t.dbMessages(fmtInt(s.db.messages)));
+    if (s.totals) bits.push(t.totalsLine(fmtTokens(totalTokens(s.totals.tokens)), fmtCny(s.totals.official)));
+    bits.push(t.sampled(new Date(s.generatedAt).toLocaleTimeString(lang === "zh" ? "zh-CN" : "en-GB", { hour12: false })));
+    if (s.fx) bits.push(t.fx(String(s.fx.usdCny), s.fx.source));
+    foot.replaceChildren(el2("div", void 0, bits.join(" \xB7 ")), el2("div", void 0, t.note));
   }
   function renderAll(s) {
     lastSummary = s;
@@ -1726,18 +1820,18 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
     renderStats(s);
     renderDays(s);
     renderModels(s);
-    renderPricing(s);
     renderFooter(s);
-    updated.textContent = `\u66F4\u65B0\u4E8E ${new Date(s.generatedAt).toLocaleTimeString("zh-CN", { hour12: false })}`;
+    updated.textContent = T().updatedAt(new Date(s.generatedAt).toLocaleTimeString(lang === "zh" ? "zh-CN" : "en-GB", { hour12: false }));
   }
   function renderError(error) {
+    const t = T();
     const message = error instanceof Error ? error.message : String(error);
     bannerHandle?.dispose();
     bannerHandle = mountBanner(bannerSlot, {
       tone: "error",
-      title: "\u672C\u5730\u670D\u52A1\u4E0D\u53EF\u7528",
-      body: `${message}\u3002\u8BF7\u786E\u8BA4\u6269\u5C55\u5DF2\u5141\u8BB8\u672C\u5730\u670D\u52A1\uFF0C\u7136\u540E\u91CD\u8BD5\u3002`,
-      action: { label: "\u91CD\u8BD5", onClick: () => void refresh() }
+      title: t.serviceDown,
+      body: t.serviceDownBody(message),
+      action: { label: t.retry, onClick: () => void refresh() }
     });
   }
   async function refresh() {
@@ -1753,10 +1847,11 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
     }
   }
   function renderTabs() {
+    const t = T();
     const items = [
-      { id: "today", label: "\u4ECA\u65E5" },
-      { id: "7d", label: "\u8FD1 7 \u5929" },
-      { id: "30d", label: "\u8FD1 30 \u5929" }
+      { id: "today", label: t.tabToday },
+      { id: "7d", label: t.tab7 },
+      { id: "30d", label: t.tab30 }
     ];
     if (!tabsHandle) {
       tabsHandle = mountTabs(tabsSlot, {
@@ -1772,10 +1867,24 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
     }
     tabsHandle.update({ items, activeId: activeTab });
   }
+  function applyLocale() {
+    const t = T();
+    title.textContent = t.title;
+    sessionK.textContent = t.session;
+    balK.textContent = t.balance;
+    todayK.textContent = t.todayCost;
+    daysSection.textContent = t.byDay;
+    modelsSection.textContent = t.byModel;
+    pricingSummary.textContent = t.pricing;
+    refreshHandle?.update({ label: t.refresh });
+    pricingBody.replaceChildren();
+    renderTabs();
+    if (lastSummary) renderAll(lastSummary);
+  }
   function boot() {
     renderTabs();
-    mountButton(refreshSlot, {
-      label: "\u5237\u65B0",
+    refreshHandle = mountButton(refreshSlot, {
+      label: T().refresh,
       size: "xs",
       variant: "outline",
       onClick: () => void refresh()
@@ -1787,8 +1896,9 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
     }, 6e4);
     setInterval(() => {
       if (countdownTarget) {
-        const to = lastSummary?.now.nextPhase === "peak" ? "\u5CF0\u65F6" : "\u8C37\u65F6";
-        countdownEl.textContent = `\u8DDD\u5207\u6362 ${countdown(countdownTarget - Date.now())} \u2192 ${to}`;
+        const t = T();
+        const to = lastSummary?.now.nextPhase === "peak" ? t.peak : t.offpeak;
+        countdownEl.textContent = t.countdown(countdown(countdownTarget - Date.now()), to);
       }
     }, 1e3);
   }
@@ -1803,6 +1913,10 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
   } else {
     host.onReady((ctx) => {
       applyHostReady(ctx, document.documentElement);
+      const next = detectLang(ctx.locale);
+      const changed = next !== lang;
+      lang = next;
+      if (changed && mounted) applyLocale();
       const sid = ctx.session?.id ?? null;
       if (sid !== currentSessionId) {
         currentSessionId = sid;
@@ -1820,10 +1934,7 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
     });
     setTimeout(() => {
       if (!mounted) {
-        mountEmpty(root, {
-          title: "\u672A\u8FDE\u63A5\u5230 OpenChamber",
-          body: "\u8BF7\u5728 OpenChamber \u7684\u6269\u5C55\u9762\u677F\u4E2D\u6253\u5F00\u6B64\u9875\u9762\uFF1B\u5F00\u53D1\u9884\u89C8\u53EF\u52A0 ?mock=1\u3002"
-        });
+        mountEmpty(root, { title: T().notConnected, body: T().notConnectedBody });
       }
     }, 1500);
   }
@@ -1871,7 +1982,7 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
         nextChangeAt: next.getTime(),
         nextPhase: cur ? "offpeak" : "peak"
       },
-      window: { utc: "\u5468\u4E00\u81F3\u5468\u4E94 01:00\u201304:00\u300106:00\u201310:00 UTC", local: "\u5317\u4EAC\u65F6\u95F4 09:00\u201312:00\u300114:00\u201318:00" },
+      window: { utc: L.zh.windowUtc, local: L.zh.windowLocal },
       pricing: {
         flash: { hitOff: 0.02, hitPeak: 0.04, missOff: 1, missPeak: 2, outOff: 4, outPeak: 8 },
         pro: { hitOff: 0.15, hitPeak: 0.3, missOff: 4.5, missPeak: 9, outOff: 13.5, outPeak: 27 }
@@ -1921,7 +2032,7 @@ textarea.oc-sdk-input { height: auto; padding: 8px 12px; resize: vertical; }
         { model: "deepseek-v4-flash-vision-exp", tier: "flash", requests: 5, tokens: totals.tokens, cost: totals.cost * 1e-3, official: 0.209, peakOfficial: 0, offOfficial: 0, date: "" }
       ],
       days: days2,
-      notes: ["\u5B98\u65B9\u4EF7\u6309\u4EBA\u6C11\u5E01\u4EF7\u76EE\u4E0E\u5CF0\u8C37\u65F6\u6BB5\u9010\u6761\u91CD\u7B97\uFF1B\u7F13\u5B58\u5199\u5165\u4E0D\u8BA1\u8D39\uFF1BOpenCode \u8BB0\u8D26\u6309 USD\u2192CNY \u6298\u7B97"]
+      notes: []
     };
   }
 })();

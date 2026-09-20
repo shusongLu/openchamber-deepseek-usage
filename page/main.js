@@ -12,7 +12,6 @@
   var GUEST_FILE_STAT_KINDS = ["file", "directory", "other", "missing"];
   var isStartSessionResult = (value) => Boolean(value && "sessionId" in value);
   var isPromptResult = (value) => Boolean(value && "sent" in value && !("sessionId" in value));
-  var isGuestMessageItem = (item) => item !== null && item.kind === "message";
   var GUEST_TOAST_MAX = 500;
   var GUEST_CLIPBOARD_TEXT_MAX = 32e3;
   var GUEST_COMPOSE_TEXT_MAX = 16e3;
@@ -76,7 +75,7 @@
   var clampBranch = (value) => value?.trim().slice(0, GUEST_ATTACH_BRANCH_MAX) ?? "";
   var clampAttachRequest = (request) => {
     const id = request.id.trim().slice(0, GUEST_ATTACH_ID_MAX);
-    const title = request.title.trim().slice(0, GUEST_ATTACH_TITLE_MAX);
+    const title2 = request.title.trim().slice(0, GUEST_ATTACH_TITLE_MAX);
     const url = request.url.trim().slice(0, GUEST_ATTACH_URL_MAX);
     const text = request.text?.trim().slice(0, GUEST_ATTACH_TEXT_MAX);
     const author = request.author?.trim().slice(0, GUEST_ATTACH_AUTHOR_MAX);
@@ -84,7 +83,7 @@
     const next = {
       providerId: request.providerId.trim(),
       id,
-      title: title || id,
+      title: title2 || id,
       url,
       kind
     };
@@ -95,10 +94,10 @@
       next.author = author;
     }
     if (kind === "pull") {
-      const head = clampBranch(request.branches?.head);
+      const head2 = clampBranch(request.branches?.head);
       const base = clampBranch(request.branches?.base);
-      if (head && base) {
-        next.branches = { head, base };
+      if (head2 && base) {
+        next.branches = { head: head2, base };
       }
     }
     if (isAttachData(request.data)) {
@@ -848,30 +847,75 @@
     };
   };
 
-  // background/main.ts
-  function detect(locale) {
-    return locale && locale.toLowerCase().startsWith("zh") ? "zh" : "en";
-  }
-  var lang = detect(navigator.language);
+  // page/main.ts
   var L = {
     zh: {
-      onlyMessages: "\u300C\u672C\u6761 DeepSeek \u8D39\u7528\u300D\u53EA\u652F\u6301\u6D88\u606F\u3002",
-      header: (model) => `\u672C\u6761 ${model} \u8D39\u7528`,
-      price: (cny, peak) => `\u5B98\u65B9\u4EF7 ${cny}\uFF08${peak ? "\u5CF0\u65F6" : "\u8C37\u65F6"}\uFF09`,
-      tokens: (input, cache, output) => `\u8F93\u5165 ${input} \xB7 \u7F13\u5B58\u547D\u4E2D ${cache} \xB7 \u8F93\u51FA ${output}`,
-      recorded: (cny) => `OpenCode \u8BB0\u8D26 ${cny}`,
-      failed: (msg) => `\u67E5\u8BE2\u5931\u8D25\uFF1A${msg}`
+      title: "DeepSeek \u7528\u91CF\u770B\u677F",
+      refresh: "\u5237\u65B0",
+      peak: "\u5CF0\u65F6",
+      offpeak: "\u8C37\u65F6",
+      switchesIn: (time, next) => `\u8DDD\u5207\u6362 ${time} \u2192 ${next}`,
+      balance: "\u4F59\u989D",
+      today: "\u4ECA\u65E5\u8D39\u7528\uFF08\u5B98\u65B9\u4EF7\uFF09",
+      d30: "\u8FD1 30 \u5929\uFF08\u5B98\u65B9\u4EF7\uFF09",
+      d30recorded: "\u8FD1 30 \u5929\uFF08OpenCode \u8BB0\u8D26\uFF09",
+      allTime: "\u7D2F\u8BA1\uFF08\u5B98\u65B9\u4EF7\uFF09",
+      calls: (n) => `${n} \u6B21`,
+      calendar: "\u6BCF\u65E5\u8D39\u7528\uFF08\u8FD1 12 \u5468\uFF09",
+      less: "\u5C11",
+      more: "\u591A",
+      ranking: "\u4F1A\u8BDD\u6392\u884C\uFF08\u8FD1 30 \u5929\uFF0C\u542B\u5B50\u4EE3\u7406\uFF09",
+      noData: "\u6682\u65E0\u6570\u636E",
+      openFailed: (msg) => `\u6253\u5F00\u4F1A\u8BDD\u5931\u8D25\uFF1A${msg}`,
+      updatedAt: (time) => `\u66F4\u65B0\u4E8E ${time}`,
+      loadFailed: (msg) => `\u52A0\u8F7D\u5931\u8D25\uFF1A${msg}`,
+      retry: "\u91CD\u8BD5",
+      fxNote: (rate, src) => `OpenCode \u8BB0\u8D26\u6309\u6C47\u7387 1 USD = \xA5${rate} \u6298\u7B97\uFF08${src}\uFF09`,
+      note: "\u5B98\u65B9\u4EF7\u6309\u4EBA\u6C11\u5E01\u4EF7\u76EE\u4E0E\u5CF0\u8C37\u65F6\u6BB5\u9010\u6761\u91CD\u7B97\uFF1B\u70B9\u51FB\u4F1A\u8BDD\u884C\u53EF\u8DF3\u8F6C\u5230\u8BE5\u4F1A\u8BDD"
     },
     en: {
-      onlyMessages: "\u201CMessage DeepSeek cost\u201D works on messages only.",
-      header: (model) => `This message \xB7 ${model}`,
-      price: (cny, peak) => `official ${cny} (${peak ? "peak" : "off-peak"})`,
-      tokens: (input, cache, output) => `input ${input} \xB7 cache hit ${cache} \xB7 output ${output}`,
-      recorded: (cny) => `OpenCode recorded ${cny}`,
-      failed: (msg) => `Request failed: ${msg}`
+      title: "DeepSeek Usage Dashboard",
+      refresh: "Refresh",
+      peak: "peak",
+      offpeak: "off-peak",
+      switchesIn: (time, next) => `switches in ${time} \u2192 ${next}`,
+      balance: "Balance",
+      today: "Today's cost (official)",
+      d30: "Last 30 days (official)",
+      d30recorded: "Last 30 days (OpenCode recorded)",
+      allTime: "All time (official)",
+      calls: (n) => `${n} calls`,
+      calendar: "Daily cost (last 12 weeks)",
+      less: "less",
+      more: "more",
+      ranking: "Sessions by cost (last 30 days, incl. subagents)",
+      noData: "No data",
+      openFailed: (msg) => `Could not open session: ${msg}`,
+      updatedAt: (time) => `updated ${time}`,
+      loadFailed: (msg) => `Load failed: ${msg}`,
+      retry: "Retry",
+      fxNote: (rate, src) => `OpenCode recorded converted at 1 USD = \xA5${rate} (${src})`,
+      note: "Official cost recomputed per message using the CNY price list and peak windows; click a session row to open it."
     }
   };
+  var MOCK = new URLSearchParams(location.search).has("mock");
+  function detectLang(locale) {
+    return locale && locale.toLowerCase().startsWith("zh") ? "zh" : "en";
+  }
+  var lang = detectLang(MOCK ? new URLSearchParams(location.search).get("lang") ?? navigator.language : navigator.language);
+  var T = () => L[lang];
   var host = connectHost();
+  var root = document.querySelector("#root");
+  var mounted = false;
+  var lastSummary = null;
+  var lastSessions = [];
+  var el = (tag, className, text) => {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== void 0) node.textContent = text;
+    return node;
+  };
+  var totalTokens = (t) => t.input + t.output + t.reasoning + t.cacheRead + t.cacheWrite;
   function fmtTokens(n) {
     if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
     if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
@@ -883,36 +927,311 @@
     if (n >= 1) return `\xA5${n.toFixed(2)}`;
     return `\xA5${n.toFixed(3)}`;
   }
-  host.onReady((ctx) => {
-    lang = detect(ctx.locale);
-  });
-  host.onAction(async (item) => {
-    const t = L[lang];
-    if (!isGuestMessageItem(item)) {
-      await host.toast({ kind: "error", message: t.onlyMessages, dismiss: true });
+  var fmtInt = (n) => Math.round(n).toLocaleString("en-US");
+  function countdown(ms) {
+    const s = Math.max(0, Math.floor(ms / 1e3));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor(s % 3600 / 60);
+    const ss = s % 60;
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
+  }
+  function localDateStr(d) {
+    const p = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  }
+  function fmtDateTime(ms) {
+    const d = new Date(ms);
+    const p = (n) => String(n).padStart(2, "0");
+    return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+  var page = el("div", "page");
+  var head = el("div", "head");
+  var title = el("div", "title", T().title);
+  var headRight = el("div", "head-right");
+  var peakBadge = el("div", "peak-badge");
+  var updated = el("div", "small muted");
+  var headSpacer = el("div", "small muted");
+  var cards = el("div", "cards");
+  var calendarSection = el("div", "section", T().calendar);
+  var heatWrap = el("div", "heat-wrap");
+  var heat = el("div", "heat");
+  var legend = el("div", "legend");
+  var rankingSection = el("div", "section", T().ranking);
+  var rows = el("div", "rows");
+  var foot = el("div", "foot");
+  headRight.append(peakBadge, updated);
+  head.append(title, headRight);
+  heatWrap.append(heat, legend);
+  page.append(head, cards, calendarSection, heatWrap, rankingSection, rows, foot);
+  root.append(page);
+  async function loadData() {
+    if (MOCK) {
+      const summary2 = mockSummary();
+      return { summary: summary2, sessions: mockSessions() };
+    }
+    const [summaryRes, sessionsRes] = await Promise.all([
+      host.serviceRequest({ method: "GET", path: "/summary", query: { days: "90" } }),
+      host.serviceRequest({ method: "GET", path: "/sessions", query: { days: "30", limit: "15" } })
+    ]);
+    const summary = JSON.parse(summaryRes.body);
+    const sessions = JSON.parse(sessionsRes.body);
+    return { summary, sessions: sessions.ok ? sessions.sessions : [] };
+  }
+  function statCard(label, value, sub) {
+    const card = el("div", "card");
+    card.append(el("div", "k", label), el("div", "v", value));
+    if (sub) card.append(el("div", "sub", sub));
+    return card;
+  }
+  function sumDays(list) {
+    let official = 0;
+    let cost = 0;
+    let requests = 0;
+    for (const d of list) {
+      official += d.official;
+      cost += d.cost;
+      requests += d.requests;
+    }
+    return { official, cost, requests };
+  }
+  function renderHead(s) {
+    const t = T();
+    peakBadge.textContent = `${s.now.isPeak ? t.peak : t.offpeak} \xB7 ${t.switchesIn(countdown(s.now.nextChangeAt - Date.now()), s.now.nextPhase === "peak" ? t.peak : t.offpeak)}`;
+    updated.textContent = t.updatedAt(new Date(s.generatedAt).toLocaleTimeString(lang === "zh" ? "zh-CN" : "en-GB", { hour12: false }));
+  }
+  function renderCards(s) {
+    const t = T();
+    const last30 = (s.days ?? []).slice(-30);
+    const agg30 = sumDays(last30);
+    const balance = s.balance?.ok ? `${s.balance.currency === "CNY" ? "\xA5" : ""}${s.balance.total ?? "\u2014"}` : "\u2014";
+    cards.replaceChildren(
+      statCard(t.balance, balance, s.balance?.ok ? void 0 : s.balance?.reason === "no-key" ? "no key" : void 0),
+      statCard(t.today, fmtCny(s.today?.official ?? 0), s.today ? t.calls(fmtInt(s.today.requests)) : t.noData),
+      statCard(t.d30, fmtCny(agg30.official), t.calls(fmtInt(agg30.requests))),
+      statCard(t.d30recorded, fmtCny(agg30.cost)),
+      statCard(t.allTime, fmtCny(s.totals?.official ?? 0), s.totals ? `${fmtTokens(totalTokens(s.totals.tokens))} tokens` : void 0)
+    );
+  }
+  function renderHeat(s) {
+    const t = T();
+    const days = s.days ?? [];
+    const map = new Map(days.map((d) => [d.date, d.official]));
+    const max = Math.max(1e-9, ...days.map((d) => d.official));
+    const today = /* @__PURE__ */ new Date();
+    today.setHours(0, 0, 0, 0);
+    const mondayOffset = (today.getDay() + 6) % 7;
+    const start = new Date(today);
+    start.setDate(start.getDate() - mondayOffset - 11 * 7);
+    const cells = [];
+    for (let i = 0; i < 12 * 7; i += 1) {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      const key = localDateStr(d);
+      const cost = map.get(key) ?? 0;
+      const cell = el("div", "cell");
+      if (cost > 0) {
+        const level = Math.min(4, 1 + Math.floor(cost / max * 3.999));
+        cell.classList.add(`l${level}`);
+      }
+      if (d.getTime() > today.getTime()) cell.style.visibility = "hidden";
+      cell.title = `${key} \xB7 ${fmtCny(cost)}`;
+      cells.push(cell);
+    }
+    heat.replaceChildren(...cells);
+    legend.replaceChildren(
+      el("span", void 0, t.less),
+      ...["", "l1", "l2", "l3", "l4"].map((lv) => {
+        const sw = el("span", `swatch ${lv}`.trim());
+        sw.style.background = `color-mix(in srgb, currentColor ${["8", "24", "38", "54", "74"][["", "l1", "l2", "l3", "l4"].indexOf(lv)]}%, transparent)`;
+        return sw;
+      }),
+      el("span", void 0, t.more)
+    );
+  }
+  function renderRanking() {
+    const t = T();
+    if (lastSessions.length === 0) {
+      rows.replaceChildren(el("div", "small muted", t.noData));
       return;
     }
+    rows.replaceChildren(
+      ...lastSessions.map((s, index) => {
+        const row = el("div", "rank");
+        row.title = s.id;
+        const name = el("div", "name", s.title || s.id);
+        row.append(
+          el("div", "no", String(index + 1)),
+          name,
+          el("div", "meta", `${fmtInt(s.requests)} \xB7 ${fmtTokens(totalTokens(s.tokens))} \xB7 ${fmtDateTime(s.lastMessageAt || s.startedAt)}`),
+          el("div", "val", fmtCny(s.official))
+        );
+        row.addEventListener("click", () => {
+          void (async () => {
+            try {
+              await host.openSession(s.id);
+            } catch (error) {
+              await host.toast({
+                kind: "error",
+                message: t.openFailed(error instanceof Error ? error.message : String(error)),
+                dismiss: true
+              });
+            }
+          })();
+        });
+        return row;
+      })
+    );
+  }
+  function renderFoot(s) {
+    const t = T();
+    const bits = [];
+    if (s.fx) bits.push(t.fxNote(String(s.fx.usdCny), s.fx.source));
+    bits.push(t.note);
+    foot.replaceChildren(...bits.map((b) => el("div", void 0, b)));
+  }
+  function renderAll(summary, sessions) {
+    lastSummary = summary;
+    lastSessions = sessions;
+    renderHead(summary);
+    renderCards(summary);
+    renderHeat(summary);
+    renderRanking();
+    renderFoot(summary);
+  }
+  function showError(error) {
+    const t = T();
+    cards.replaceChildren(
+      statCard(
+        t.loadFailed(error instanceof Error ? error.message : String(error)),
+        ""
+      )
+    );
+    const btn = el("div", "card");
+    btn.style.cursor = "pointer";
+    btn.textContent = t.retry;
+    btn.addEventListener("click", () => void refresh());
+    cards.append(btn);
+  }
+  var loading = false;
+  async function refresh() {
+    if (loading) return;
+    loading = true;
     try {
-      const res = await host.serviceRequest({ method: "GET", path: "/message", query: { id: item.messageId } });
-      const data = JSON.parse(res.body);
-      if (!data.ok || !data.tokens) {
-        await host.toast({ kind: "error", message: t.failed(data.error ?? `HTTP ${res.status}`), dismiss: true });
-        return;
-      }
-      const tokens = data.tokens;
-      const text = [
-        t.header(data.model ?? "DeepSeek"),
-        t.price(fmtCny(data.official ?? 0), Boolean(data.peak)),
-        t.tokens(fmtTokens(tokens.input), fmtTokens(tokens.cacheRead), fmtTokens(tokens.output + tokens.reasoning)),
-        t.recorded(fmtCny(data.cost ?? 0))
-      ].join("\n");
-      await host.toast({ kind: "info", message: text, copy: { text }, persistent: true });
+      const { summary, sessions } = await loadData();
+      renderAll(summary, sessions);
     } catch (error) {
-      await host.toast({
-        kind: "error",
-        message: t.failed(error instanceof Error ? error.message : String(error)),
-        dismiss: true
+      showError(error);
+    } finally {
+      loading = false;
+    }
+  }
+  function applyLocale() {
+    const t = T();
+    title.textContent = t.title;
+    calendarSection.textContent = t.calendar;
+    rankingSection.textContent = t.ranking;
+    refreshButton.textContent = `\u21BB ${t.refresh}`;
+    if (lastSummary) renderAll(lastSummary, lastSessions);
+  }
+  var refreshButton = el("button", "peak-badge");
+  refreshButton.textContent = `\u21BB ${T().refresh}`;
+  refreshButton.style.cursor = "pointer";
+  refreshButton.addEventListener("click", () => void refresh());
+  headRight.append(refreshButton);
+  function boot() {
+    void refresh();
+    setInterval(() => {
+      if (document.hidden) return;
+      void refresh();
+    }, 12e4);
+    setInterval(() => {
+      if (lastSummary) renderHead(lastSummary);
+    }, 1e3);
+  }
+  if (MOCK) {
+    const dark = new URLSearchParams(location.search).get("theme") !== "light";
+    const html = document.documentElement;
+    html.style.colorScheme = dark ? "dark" : "light";
+    html.style.background = dark ? "#15171c" : "#ffffff";
+    html.style.color = dark ? "#e8e8ea" : "#1b1b1f";
+    html.style.minHeight = "100vh";
+    boot();
+  } else {
+    host.onReady((ctx) => {
+      const next = detectLang(ctx.locale);
+      if (next !== lang) {
+        lang = next;
+        applyLocale();
+      }
+      if (mounted) return;
+      mounted = true;
+      boot();
+    });
+  }
+  function mockSummary() {
+    const now = Date.now();
+    const days = [];
+    for (let i = 89; i >= 0; i -= 1) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const factor = 0.25 + i * 41 % 100 / 110;
+      const input = Math.round(18e4 * factor);
+      const output = Math.round(45e3 * factor);
+      const reasoning = Math.round(output * 0.4);
+      const cacheRead = Math.round(9e6 * factor);
+      const tokens = { input, output, reasoning, cacheRead, cacheWrite: 0 };
+      const official = (input * 1 + cacheRead * 0.02 + (output + reasoning) * 4) / 1e6;
+      days.push({
+        date: localDateStr(d),
+        requests: Math.round(14 * factor),
+        tokens,
+        cost: official * 0.92,
+        official,
+        peakOfficial: official * 0.55,
+        offOfficial: official * 0.45
       });
     }
-  });
+    return {
+      ok: true,
+      generatedAt: now,
+      now: { isPeak: true, nextChangeAt: now + 15e5, nextPhase: "offpeak" },
+      balance: { ok: true, currency: "CNY", total: "263.85" },
+      fx: { usdCny: 6.7223, source: "open.er-api.com" },
+      totals: {
+        requests: days.reduce((a, d) => a + d.requests, 0),
+        tokens: { input: 2e7, output: 4e6, reasoning: 16e5, cacheRead: 9e8, cacheWrite: 0 },
+        cost: days.reduce((a, d) => a + d.cost, 0) * 1.4,
+        official: days.reduce((a, d) => a + d.official, 0) * 1.4
+      },
+      today: days[days.length - 1] ?? null,
+      days
+    };
+  }
+  function mockSessions() {
+    const now = Date.now();
+    const titles = [
+      "OpenChamber \u6269\u5C55\u6E05\u5355\u67E5\u770B",
+      "\u91CD\u65B0\u5BA1\u67E5\u73B0\u6709 BUG",
+      "\u4E2D\u6587\u9053\u8DEF\u8FD0\u8F93\u8BC1 OCR \u8BC6\u522B\u5931\u8D25\u6392\u67E5",
+      "BillController \u9700\u8865\u5145\u4FEE\u6539\u63A5\u53E3",
+      "UserController \u65B0\u589E\u4FEE\u6539\u81EA\u8EAB\u5BC6\u7801\u63A5\u53E3",
+      "\u9879\u76EE\u5BA1\u67E5\u4E0E\u53EF\u6539\u8FDB\u9879",
+      "\u9879\u76EE\u5168\u6D41\u7A0B\u5206\u652F\u62A5\u544A",
+      "PdaCargoController \u52A0\u767D\u63D0\u8D27\u2026"
+    ];
+    return titles.map((title2, i) => {
+      const official = [16.9, 12.4, 9.8, 7.1, 5.6, 4.2, 3.1, 2.4][i];
+      const requests = [1133, 842, 611, 488, 402, 291, 233, 175][i];
+      return {
+        id: `ses_mock_${i}`,
+        title: title2,
+        official,
+        cost: official * 0.62,
+        requests,
+        tokens: { input: requests * 3200, output: requests * 1200, reasoning: requests * 500, cacheRead: requests * 9e4, cacheWrite: 0 },
+        startedAt: now - (i + 1) * 36e5 * 5,
+        lastMessageAt: now - (i + 1) * 36e5
+      };
+    });
+  }
 })();

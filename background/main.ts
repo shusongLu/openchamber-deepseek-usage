@@ -2,8 +2,36 @@
  * 后台入口：处理「本条 DeepSeek 费用」消息动作（mode: "background"）。
  * 宿主按需在隐藏 iframe 中加载本页，执行完 onAction 即销毁。
  * 结果通过 persistent + copy 的 toast 展示，不打开面板。
+ * 语言跟随宿主 locale（onReady），拿不到时退回 navigator.language。
  */
 import { connectHost, isGuestMessageItem } from '@openchamber/sdk';
+
+type Lang = 'zh' | 'en';
+
+function detect(locale?: string | null): Lang {
+  return locale && locale.toLowerCase().startsWith('zh') ? 'zh' : 'en';
+}
+
+let lang: Lang = detect(navigator.language);
+
+const L = {
+  zh: {
+    onlyMessages: '「本条 DeepSeek 费用」只支持消息。',
+    header: (model: string) => `本条 ${model} 费用`,
+    price: (cny: string, peak: boolean) => `官方价 ${cny}（${peak ? '峰时' : '谷时'}）`,
+    tokens: (input: string, cache: string, output: string) => `输入 ${input} · 缓存命中 ${cache} · 输出 ${output}`,
+    recorded: (cny: string) => `OpenCode 记账 ${cny}`,
+    failed: (msg: string) => `查询失败：${msg}`,
+  },
+  en: {
+    onlyMessages: '“Message DeepSeek cost” works on messages only.',
+    header: (model: string) => `This message · ${model}`,
+    price: (cny: string, peak: boolean) => `official ${cny} (${peak ? 'peak' : 'off-peak'})`,
+    tokens: (input: string, cache: string, output: string) => `input ${input} · cache hit ${cache} · output ${output}`,
+    recorded: (cny: string) => `OpenCode recorded ${cny}`,
+    failed: (msg: string) => `Request failed: ${msg}`,
+  },
+} as const;
 
 const host = connectHost();
 
@@ -30,9 +58,14 @@ interface MessageUsage {
   tokens?: { input: number; output: number; reasoning: number; cacheRead: number; cacheWrite: number };
 }
 
+host.onReady((ctx) => {
+  lang = detect(ctx.locale);
+});
+
 host.onAction(async (item) => {
+  const t = L[lang];
   if (!isGuestMessageItem(item)) {
-    await host.toast({ kind: 'error', message: '「本条 DeepSeek 费用」只支持消息。', dismiss: true });
+    await host.toast({ kind: 'error', message: t.onlyMessages, dismiss: true });
     return;
   }
 
@@ -40,23 +73,23 @@ host.onAction(async (item) => {
     const res = await host.serviceRequest({ method: 'GET', path: '/message', query: { id: item.messageId } });
     const data = JSON.parse(res.body) as MessageUsage;
     if (!data.ok || !data.tokens) {
-      await host.toast({ kind: 'error', message: `查询失败：${data.error ?? `HTTP ${res.status}`}`, dismiss: true });
+      await host.toast({ kind: 'error', message: t.failed(data.error ?? `HTTP ${res.status}`), dismiss: true });
       return;
     }
 
-    const t = data.tokens;
+    const tokens = data.tokens;
     const text = [
-      `本条 ${data.model ?? 'DeepSeek'} 费用`,
-      `官方价 ${fmtCny(data.official ?? 0)}（${data.peak ? '峰时' : '谷时'}）`,
-      `输入 ${fmtTokens(t.input)} · 缓存命中 ${fmtTokens(t.cacheRead)} · 输出 ${fmtTokens(t.output + t.reasoning)}`,
-      `OpenCode 记账 ${fmtCny(data.cost ?? 0)}`,
+      t.header(data.model ?? 'DeepSeek'),
+      t.price(fmtCny(data.official ?? 0), Boolean(data.peak)),
+      t.tokens(fmtTokens(tokens.input), fmtTokens(tokens.cacheRead), fmtTokens(tokens.output + tokens.reasoning)),
+      t.recorded(fmtCny(data.cost ?? 0)),
     ].join('\n');
 
     await host.toast({ kind: 'info', message: text, copy: { text }, persistent: true });
   } catch (error) {
     await host.toast({
       kind: 'error',
-      message: `查询失败：${error instanceof Error ? error.message : String(error)}`,
+      message: t.failed(error instanceof Error ? error.message : String(error)),
       dismiss: true,
     });
   }

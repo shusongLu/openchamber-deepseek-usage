@@ -260,6 +260,82 @@ function sessionToCny(agg, fxRate) {
     children: { ...agg.children, cost: agg.children.cost * fxRate }
   };
 }
+function rankSessions(dbPath, days, limit) {
+  const db = new import_node_sqlite.DatabaseSync(dbPath, { readOnly: true });
+  try {
+    const meta = db.prepare("SELECT id, parent_id AS parentId, title, time_created AS created FROM session").all();
+    const parentOf = /* @__PURE__ */ new Map();
+    const titleOf = /* @__PURE__ */ new Map();
+    const createdOf = /* @__PURE__ */ new Map();
+    for (const m of meta) {
+      const id = String(m.id);
+      parentOf.set(id, m.parentId ? String(m.parentId) : null);
+      titleOf.set(id, String(m.title ?? ""));
+      createdOf.set(id, num(m.created));
+    }
+    const cutoff = Date.now() - days * 864e5;
+    const rows = db.prepare(
+      `SELECT session_id AS sid,
+                time_created AS ts,
+                json_extract(data,'$.modelID') AS model,
+                json_extract(data,'$.tokens.input') AS input,
+                json_extract(data,'$.tokens.output') AS output,
+                json_extract(data,'$.tokens.reasoning') AS reasoning,
+                json_extract(data,'$.tokens.cache.read') AS cache_read,
+                json_extract(data,'$.tokens.cache.write') AS cache_write,
+                json_extract(data,'$.cost') AS cost
+         FROM message
+         WHERE json_extract(data,'$.role') = 'assistant'
+           AND json_extract(data,'$.modelID') LIKE 'deepseek%'
+           AND time_created >= ?`
+    ).all(cutoff);
+    const roots = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      let sid = String(row.sid);
+      let parent = parentOf.get(sid) ?? null;
+      let guard = 0;
+      while (parent && guard < 64) {
+        sid = parent;
+        parent = parentOf.get(sid) ?? null;
+        guard += 1;
+      }
+      const ts = num(row.ts);
+      const peak = ts ? isPeak(new Date(ts)) : false;
+      const tokens = {
+        input: num(row.input),
+        output: num(row.output),
+        reasoning: num(row.reasoning),
+        cacheRead: num(row.cache_read),
+        cacheWrite: num(row.cache_write)
+      };
+      const official = messageOfficialCost(tokens, tierOf(String(row.model ?? "")), peak);
+      const cost = num(row.cost);
+      let agg = roots.get(sid);
+      if (!agg) {
+        agg = {
+          id: sid,
+          title: titleOf.get(sid) ?? sid,
+          official: 0,
+          cost: 0,
+          requests: 0,
+          tokens: emptyTokens(),
+          startedAt: createdOf.get(sid) ?? ts,
+          lastMessageAt: 0
+        };
+        roots.set(sid, agg);
+      }
+      agg.requests += 1;
+      addTokens(agg.tokens, tokens);
+      agg.official += official;
+      agg.cost += cost;
+      if (ts > agg.lastMessageAt) agg.lastMessageAt = ts;
+    }
+    const sessions = [...roots.values()].sort((a, b) => b.official - a.official).slice(0, limit);
+    return { sessions };
+  } finally {
+    db.close();
+  }
+}
 var usageCache = null;
 var USAGE_TTL_MS = 3e4;
 function getUsage() {
@@ -497,6 +573,24 @@ var server = (0, import_node_http.createServer)((req, res) => {
           tokens,
           official,
           cost: num(row.cost) * fx.rate,
+          fx: { usdCny: Number(fx.rate.toFixed(4)), source: fx.source }
+        });
+        return;
+      }
+      if (url.pathname === "/sessions") {
+        const daysParam = Math.min(Math.max(Number(url.searchParams.get("days") || 30) || 30, 1), 365);
+        const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 20) || 20, 1), 100);
+        const dbPath = findDb();
+        if (!dbPath) {
+          sendJson(res, 404, { ok: false, error: "db-not-found" });
+          return;
+        }
+        const { sessions } = rankSessions(dbPath, daysParam, limit);
+        const fx = await getFxRate();
+        sendJson(res, 200, {
+          ok: true,
+          days: daysParam,
+          sessions: sessions.map((s) => ({ ...s, cost: s.cost * fx.rate })),
           fx: { usdCny: Number(fx.rate.toFixed(4)), source: fx.source }
         });
         return;

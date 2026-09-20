@@ -9,5 +9,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["panel", "background", "service"]
+  "include": ["panel", "background", "page", "service"]
 }

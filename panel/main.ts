@@ -4,6 +4,9 @@
  * 数据来自本扩展的本地 service（/summary）：
  *  - 余额：DeepSeek 官方 /user/balance（service 读本机 key）
  *  - 用量：本机 opencode.db 中所有 DeepSeek 消息，按峰谷价重算
+ *
+ * 语言跟随宿主（HostReadyContext.locale），zh-* → 中文，其余 → English。
+ * 预览可用 ?lang=zh|en 指定。
  */
 import { connectHost } from '@openchamber/sdk';
 import { applyHostReady, mountBanner, mountButton, mountEmpty, mountTabs } from '@openchamber/sdk/ui';
@@ -88,9 +91,140 @@ interface Summary {
   notes?: string[];
 }
 
-// ---------------------------------------------------------------- 环境
+// ---------------------------------------------------------------- 语言
+
+type Lang = 'zh' | 'en';
+
+const L = {
+  zh: {
+    title: 'DeepSeek 用量',
+    refresh: '刷新',
+    updatedAt: (time: string) => `更新于 ${time}`,
+    peakTitle: '当前：峰时（标准价）',
+    offTitle: '当前：谷时（半价）',
+    windowBody: (local: string) => `峰时窗口：${local}；其余时间为谷时（半价）`,
+    dataUnavailable: (err: string) => `用量数据不可用：${err}`,
+    countdown: (time: string, next: string) => `距切换 ${time} → ${next}`,
+    peak: '峰时',
+    offpeak: '谷时',
+    session: '当前会话',
+    noSession: '未在会话中',
+    sessionEmpty: '本会话暂无 DeepSeek 调用',
+    sessionSub: (main: string, children: string, n: string, tokens: string) =>
+      `主会话 ${main} · 子代理 ${children} · ${n} 次 · ${tokens} tokens`,
+    sessionStarted: (dt: string, dur: string) => `开始 ${dt}（${dur}）`,
+    sessionLast: (dt: string) => `最近调用 ${dt}`,
+    sessionPeakOff: (peak: string, off: string) => `峰 ${peak} / 谷 ${off}`,
+    balance: '余额',
+    balanceSub: (top: string, granted: string, src: string) => `充值 ${top} · 赠送 ${granted}${src}`,
+    keySource: (src: string) => ` · key: ${src}`,
+    lowBalance: ' · 余额不足',
+    noKey: '未找到本机 DeepSeek key（secrets / auth.json）',
+    balanceFailed: (msg: string) => `余额查询失败：${msg}`,
+    balanceUnavailable: '余额不可用',
+    todayCost: '今日费用（官方价）',
+    todaySub: (n: string, tokens: string) => `${n} 次 · ${tokens} tokens`,
+    todayNone: '今日暂无调用',
+    tabToday: '今日',
+    tab7: '近 7 天',
+    tab30: '近 30 天',
+    requests: '请求数',
+    inputMiss: '输入（未命中）',
+    cacheHit: '缓存命中',
+    output: '输出（含推理）',
+    official: '官方价估算',
+    peakCost: '其中峰时',
+    offCost: '其中谷时',
+    opencodeCost: 'OpenCode 记账',
+    byDay: '按日',
+    byModel: '按模型',
+    noData: '暂无数据',
+    pricing: '谷峰价目（元 / 1M tokens）',
+    pricingNote: '格式：谷时 / 峰时；输出含推理 tokens',
+    dbMessages: (n: string) => `opencode.db · ${n} 条消息`,
+    totalsLine: (tokens: string, cny: string) => `累计 ${tokens} tokens · ${cny}`,
+    sampled: (time: string) => `采样 ${time}`,
+    fx: (rate: string, src: string) => `OpenCode 记账按汇率 1 USD = ¥${rate} 折算（${src}）`,
+    note: '官方价按人民币价目与峰谷时段逐条重算；缓存写入不计费；OpenCode 记账按 USD→CNY 折算',
+    serviceDown: '本地服务不可用',
+    serviceDownBody: (msg: string) => `${msg}。请确认扩展已允许本地服务，然后重试。`,
+    retry: '重试',
+    notConnected: '未连接到 OpenChamber',
+    notConnectedBody: '请在 OpenChamber 的扩展面板中打开此页面；开发预览可加 ?mock=1。',
+    windowLocal: '北京时间 09:00–12:00、14:00–18:00',
+    windowUtc: '周一至周五 01:00–04:00、06:00–10:00 UTC',
+  },
+  en: {
+    title: 'DeepSeek Usage',
+    refresh: 'Refresh',
+    updatedAt: (time: string) => `updated ${time}`,
+    peakTitle: 'Now: peak hours (standard price)',
+    offTitle: 'Now: off-peak (half price)',
+    windowBody: (local: string) => `Peak window: ${local}; all other hours are off-peak (half price)`,
+    dataUnavailable: (err: string) => `Usage data unavailable: ${err}`,
+    countdown: (time: string, next: string) => `switches in ${time} → ${next}`,
+    peak: 'peak',
+    offpeak: 'off-peak',
+    session: 'Current session',
+    noSession: 'No session open',
+    sessionEmpty: 'No DeepSeek calls in this session yet',
+    sessionSub: (main: string, children: string, n: string, tokens: string) =>
+      `main ${main} · subagents ${children} · ${n} calls · ${tokens} tokens`,
+    sessionStarted: (dt: string, dur: string) => `started ${dt} (${dur})`,
+    sessionLast: (dt: string) => `last call ${dt}`,
+    sessionPeakOff: (peak: string, off: string) => `peak ${peak} / off-peak ${off}`,
+    balance: 'Balance',
+    balanceSub: (top: string, granted: string, src: string) => `topped-up ${top} · granted ${granted}${src}`,
+    keySource: (src: string) => ` · key: ${src}`,
+    lowBalance: ' · insufficient balance',
+    noKey: 'No local DeepSeek key found (secrets / auth.json)',
+    balanceFailed: (msg: string) => `Balance request failed: ${msg}`,
+    balanceUnavailable: 'Balance unavailable',
+    todayCost: "Today's cost (official)",
+    todaySub: (n: string, tokens: string) => `${n} calls · ${tokens} tokens`,
+    todayNone: 'No calls today',
+    tabToday: 'Today',
+    tab7: 'Last 7 days',
+    tab30: 'Last 30 days',
+    requests: 'Requests',
+    inputMiss: 'Input (cache miss)',
+    cacheHit: 'Cache hit',
+    output: 'Output (incl. reasoning)',
+    official: 'Official estimate',
+    peakCost: 'of which peak',
+    offCost: 'of which off-peak',
+    opencodeCost: 'OpenCode recorded',
+    byDay: 'By day',
+    byModel: 'By model',
+    noData: 'No data',
+    pricing: 'Peak / off-peak pricing (CNY / 1M tokens)',
+    pricingNote: 'Format: off-peak / peak; output includes reasoning tokens',
+    dbMessages: (n: string) => `opencode.db · ${n} messages`,
+    totalsLine: (tokens: string, cny: string) => `Total ${tokens} tokens · ${cny}`,
+    sampled: (time: string) => `sampled ${time}`,
+    fx: (rate: string, src: string) => `OpenCode recorded converted at 1 USD = ¥${rate} (${src})`,
+    note: 'Official cost recomputed per message using the CNY price list and peak windows; cache writes are not billed; OpenCode recorded cost converted via USD→CNY.',
+    serviceDown: 'Local service unavailable',
+    serviceDownBody: (msg: string) => `${msg} Check that the extension is allowed to run its local service, then retry.`,
+    retry: 'Retry',
+    notConnected: 'Not connected to OpenChamber',
+    notConnectedBody: 'Open this page inside OpenChamber. For a dev preview add ?mock=1.',
+    windowLocal: 'Beijing time 09:00–12:00, 14:00–18:00',
+    windowUtc: 'Mon–Fri 01:00–04:00, 06:00–10:00 UTC',
+  },
+} as const;
 
 const MOCK = new URLSearchParams(location.search).has('mock');
+
+function detectLang(locale?: string | null): Lang {
+  return locale && locale.toLowerCase().startsWith('zh') ? 'zh' : 'en';
+}
+
+let lang: Lang = detectLang(MOCK ? new URLSearchParams(location.search).get('lang') ?? navigator.language : navigator.language);
+const T = () => L[lang];
+
+// ---------------------------------------------------------------- 环境
+
 const host = connectHost();
 const root = document.querySelector('#root') as HTMLElement;
 const days = 30;
@@ -101,6 +235,7 @@ let lastSummary: Summary | null = null;
 let activeTab = '7d';
 let countdownTarget: number | null = null;
 let currentSessionId: string | null = null;
+let refreshHandle: ReturnType<typeof mountButton> | null = null;
 
 // ---------------------------------------------------------------- 骨架
 
@@ -117,7 +252,7 @@ const el = <K extends keyof HTMLElementTagNameMap>(
 
 const wrap = el('div', 'wrap');
 const head = el('div', 'head');
-const title = el('div', 'title', 'DeepSeek 用量');
+const title = el('div', 'title', T().title);
 const headRight = el('div', 'row');
 const updated = el('div', 'small muted');
 const refreshSlot = el('div');
@@ -125,26 +260,26 @@ const bannerSlot = el('div');
 const countdownEl = el('div', 'small muted');
 const cards = el('div', 'cards');
 const sessionCard = el('div', 'card wide');
-const sessionK = el('div', 'k', '当前会话');
+const sessionK = el('div', 'k', T().session);
 const sessionV = el('div', 'v', '—');
 const sessionS = el('div', 'sub');
 const sessionT = el('div', 'sub');
 const balCard = el('div', 'card');
-const balK = el('div', 'k', '余额');
+const balK = el('div', 'k', T().balance);
 const balV = el('div', 'v', '—');
 const balS = el('div', 'sub');
 const todayCard = el('div', 'card');
-const todayK = el('div', 'k', '今日费用（官方价）');
+const todayK = el('div', 'k', T().todayCost);
 const todayV = el('div', 'v', '—');
 const todayS = el('div', 'sub');
 const tabsSlot = el('div');
 const stats = el('div', 'grid');
-const daysSection = el('div', 'section', '按日');
+const daysSection = el('div', 'section', T().byDay);
 const daysList = el('div', 'days');
-const modelsSection = el('div', 'section', '按模型');
+const modelsSection = el('div', 'section', T().byModel);
 const modelsList = el('div', 'days');
 const pricing = el('details', 'pricing');
-const pricingSummary = el('summary', undefined, '谷峰价目（元 / 1M tokens）');
+const pricingSummary = el('summary', undefined, T().pricing);
 const pricingBody = el('div');
 const foot = el('div', 'foot small muted');
 
@@ -266,66 +401,54 @@ function statCell(label: string, value: string): HTMLElement {
 
 function renderBanner(s: Summary): void {
   const peak = s.now.isPeak;
+  const t = T();
   const body =
-    s.ok === false
-      ? `用量数据不可用：${s.error ?? '未知错误'}`
-      : `峰时窗口：${s.window.local}；其余时间为谷时（半价）`;
+    s.ok === false ? t.dataUnavailable(s.error ?? '?') : t.windowBody(t.windowLocal);
+  const title = peak ? t.peakTitle : t.offTitle;
   if (!bannerHandle) {
-    bannerHandle = mountBanner(bannerSlot, {
-      tone: peak ? 'warning' : 'success',
-      title: peak ? '当前：峰时（标准价）' : '当前：谷时（半价）',
-      body,
-    });
+    bannerHandle = mountBanner(bannerSlot, { tone: peak ? 'warning' : 'success', title, body });
     return;
   }
-  bannerHandle.update({
-    tone: peak ? 'warning' : 'success',
-    title: peak ? '当前：峰时（标准价）' : '当前：谷时（半价）',
-    body,
-  });
+  bannerHandle.update({ tone: peak ? 'warning' : 'success', title, body });
 }
 
 function renderBalance(s: Summary): void {
+  const t = T();
   const b = s.balance;
   if (b?.ok) {
     const sym = symbolOf(b.currency);
     balV.textContent = `${sym}${b.total ?? '—'}`;
     balS.textContent =
-      `充值 ${sym}${b.toppedUp ?? '—'} · 赠送 ${sym}${b.granted ?? '—'}` +
-      (b.isAvailable === false ? ' · 余额不足' : '') +
-      (b.source ? ` · key: ${b.source}` : '');
+      t.balanceSub(`${sym}${b.toppedUp ?? '—'}`, `${sym}${b.granted ?? '—'}`, b.source ? t.keySource(b.source) : '') +
+      (b.isAvailable === false ? t.lowBalance : '');
     return;
   }
   balV.textContent = '—';
-  balS.textContent =
-    b?.reason === 'no-key'
-      ? '未找到本机 DeepSeek key（secrets / auth.json）'
-      : b?.message
-        ? `余额查询失败：${b.message}`
-        : '余额不可用';
+  balS.textContent = b?.reason === 'no-key' ? t.noKey : b?.message ? t.balanceFailed(b.message) : t.balanceUnavailable;
 }
 
 function renderStats(s: Summary): void {
+  const t = T();
   const list = windowDays(s);
   const agg = sumDays(list);
   stats.replaceChildren(
-    statCell('请求数', fmtInt(agg.requests)),
-    statCell('输入（未命中）', fmtTokens(agg.tokens.input)),
-    statCell('缓存命中', fmtTokens(agg.tokens.cacheRead)),
-    statCell('输出（含推理）', fmtTokens(agg.tokens.output + agg.tokens.reasoning)),
-    statCell('官方价估算', fmtCny(agg.official)),
-    statCell('其中峰时', fmtCny(agg.peak)),
-    statCell('其中谷时', fmtCny(agg.off)),
-    statCell('OpenCode 记账', fmtCny(agg.cost)),
+    statCell(t.requests, fmtInt(agg.requests)),
+    statCell(t.inputMiss, fmtTokens(agg.tokens.input)),
+    statCell(t.cacheHit, fmtTokens(agg.tokens.cacheRead)),
+    statCell(t.output, fmtTokens(agg.tokens.output + agg.tokens.reasoning)),
+    statCell(t.official, fmtCny(agg.official)),
+    statCell(t.peakCost, fmtCny(agg.peak)),
+    statCell(t.offCost, fmtCny(agg.off)),
+    statCell(t.opencodeCost, fmtCny(agg.cost)),
   );
 
   const today = s.today ?? null;
   if (today) {
     todayV.textContent = fmtCny(today.official);
-    todayS.textContent = `${fmtInt(today.requests)} 次 · ${fmtTokens(totalTokens(today.tokens))} tokens`;
+    todayS.textContent = t.todaySub(fmtInt(today.requests), fmtTokens(totalTokens(today.tokens)));
   } else {
     todayV.textContent = '¥0.000';
-    todayS.textContent = '今日暂无调用';
+    todayS.textContent = t.todayNone;
   }
 }
 
@@ -358,9 +481,10 @@ function shortModel(model: string): string {
 }
 
 function renderModels(s: Summary): void {
+  const t = T();
   const list = (s.models ?? []).slice(0, 8);
   if (list.length === 0) {
-    modelsList.replaceChildren(el('div', 'small muted', '暂无数据'));
+    modelsList.replaceChildren(el('div', 'small muted', t.noData));
     return;
   }
   modelsList.replaceChildren(
@@ -370,7 +494,7 @@ function renderModels(s: Summary): void {
       name.title = m.model;
       row.append(
         name,
-        el('div', 'meta', m.tier ? `${m.tier} · ${fmtInt(m.requests)} 次` : `${fmtInt(m.requests)} 次`),
+        el('div', 'meta', m.tier ? `${m.tier} · ${fmtInt(m.requests)}` : `${fmtInt(m.requests)}`),
         el('div', 'val', fmtCny(m.official)),
       );
       return row;
@@ -379,11 +503,14 @@ function renderModels(s: Summary): void {
 }
 
 function renderPricing(s: Summary): void {
-  if (pricingBody.childElementCount > 0) return;
+  const t = T();
+  pricingBody.replaceChildren(el('div', 'small muted', t.pricingNote));
   const table = el('table');
   const thead = el('thead');
   const hr = el('tr');
-  ['档位', '缓存命中', '缓存未命中', '输出'].forEach((t) => hr.append(el('th', undefined, t)));
+  [lang === 'zh' ? '档位' : 'Tier', lang === 'zh' ? '缓存命中' : 'Cache hit', lang === 'zh' ? '缓存未命中' : 'Cache miss', lang === 'zh' ? '输出' : 'Output'].forEach((h) =>
+    hr.append(el('th', undefined, h)),
+  );
   thead.append(hr);
   const tbody = el('tbody');
   (['flash', 'pro'] as const).forEach((tier) => {
@@ -399,50 +526,46 @@ function renderPricing(s: Summary): void {
     tbody.append(tr);
   });
   table.append(thead, tbody);
-  pricingBody.append(el('div', 'small muted', '格式：谷时 / 峰时；输出含推理 tokens'), table);
-}
-
-function renderFooter(s: Summary): void {
-  const bits: string[] = [];
-  if (s.db) {
-    bits.push(`opencode.db · ${fmtInt(s.db.messages)} 条消息`);
-  }
-  if (s.totals) {
-    bits.push(`累计 ${fmtTokens(totalTokens(s.totals.tokens))} tokens · ${fmtCny(s.totals.official)}`);
-  }
-  bits.push(`采样 ${new Date(s.generatedAt).toLocaleTimeString('zh-CN', { hour12: false })}`);
-  if (s.fx) {
-    bits.push(`OpenCode 记账按汇率 1 USD = ¥${s.fx.usdCny} 折算（${s.fx.source}）`);
-  }
-  foot.replaceChildren(el('div', undefined, bits.join(' · ')));
-  if (s.notes && s.notes.length > 0) foot.append(el('div', undefined, s.notes.join('；')));
+  pricingBody.append(table);
 }
 
 function renderSession(s: Summary): void {
+  const t = T();
   const sess = s.session ?? null;
   if (!sess) {
     sessionV.textContent = '—';
-    sessionS.textContent = '未在会话中';
+    sessionS.textContent = t.noSession;
     sessionT.textContent = '';
     return;
   }
   if (sess.requests === 0) {
     sessionV.textContent = '¥0';
-    sessionS.textContent = '本会话暂无 DeepSeek 调用';
-    sessionT.textContent = sess.startedAt ? `开始 ${fmtDateTime(sess.startedAt)}` : '';
+    sessionS.textContent = t.sessionEmpty;
+    sessionT.textContent = sess.startedAt ? t.sessionStarted(fmtDateTime(sess.startedAt), fmtDuration(Date.now() - sess.startedAt)) : '';
     return;
   }
   sessionV.textContent = fmtCny(sess.official);
-  sessionS.textContent =
-    `主会话 ${fmtCny(sess.main.official)} · 子代理 ${fmtCny(sess.children.official)} · ` +
-    `${fmtInt(sess.requests)} 次 · ${fmtTokens(totalTokens(sess.tokens))} tokens`;
+  sessionS.textContent = t.sessionSub(
+    fmtCny(sess.main.official),
+    fmtCny(sess.children.official),
+    fmtInt(sess.requests),
+    fmtTokens(totalTokens(sess.tokens)),
+  );
   const bits: string[] = [];
-  if (sess.startedAt) bits.push(`开始 ${fmtDateTime(sess.startedAt)}（${fmtDuration(Date.now() - sess.startedAt)}）`);
-  if (sess.lastMessageAt) bits.push(`最近调用 ${fmtDateTime(sess.lastMessageAt)}`);
-  if (sess.peakOfficial > 0 || sess.offOfficial > 0) {
-    bits.push(`峰 ${fmtCny(sess.peakOfficial)} / 谷 ${fmtCny(sess.offOfficial)}`);
-  }
+  if (sess.startedAt) bits.push(t.sessionStarted(fmtDateTime(sess.startedAt), fmtDuration(Date.now() - sess.startedAt)));
+  if (sess.lastMessageAt) bits.push(t.sessionLast(fmtDateTime(sess.lastMessageAt)));
+  if (sess.peakOfficial > 0 || sess.offOfficial > 0) bits.push(t.sessionPeakOff(fmtCny(sess.peakOfficial), fmtCny(sess.offOfficial)));
   sessionT.textContent = bits.join(' · ');
+}
+
+function renderFooter(s: Summary): void {
+  const t = T();
+  const bits: string[] = [];
+  if (s.db) bits.push(t.dbMessages(fmtInt(s.db.messages)));
+  if (s.totals) bits.push(t.totalsLine(fmtTokens(totalTokens(s.totals.tokens)), fmtCny(s.totals.official)));
+  bits.push(t.sampled(new Date(s.generatedAt).toLocaleTimeString(lang === 'zh' ? 'zh-CN' : 'en-GB', { hour12: false })));
+  if (s.fx) bits.push(t.fx(String(s.fx.usdCny), s.fx.source));
+  foot.replaceChildren(el('div', undefined, bits.join(' · ')), el('div', undefined, t.note));
 }
 
 function renderAll(s: Summary): void {
@@ -454,19 +577,19 @@ function renderAll(s: Summary): void {
   renderStats(s);
   renderDays(s);
   renderModels(s);
-  renderPricing(s);
   renderFooter(s);
-  updated.textContent = `更新于 ${new Date(s.generatedAt).toLocaleTimeString('zh-CN', { hour12: false })}`;
+  updated.textContent = T().updatedAt(new Date(s.generatedAt).toLocaleTimeString(lang === 'zh' ? 'zh-CN' : 'en-GB', { hour12: false }));
 }
 
 function renderError(error: unknown): void {
+  const t = T();
   const message = error instanceof Error ? error.message : String(error);
   bannerHandle?.dispose();
   bannerHandle = mountBanner(bannerSlot, {
     tone: 'error',
-    title: '本地服务不可用',
-    body: `${message}。请确认扩展已允许本地服务，然后重试。`,
-    action: { label: '重试', onClick: () => void refresh() },
+    title: t.serviceDown,
+    body: t.serviceDownBody(message),
+    action: { label: t.retry, onClick: () => void refresh() },
   });
 }
 
@@ -486,10 +609,11 @@ async function refresh(): Promise<void> {
 }
 
 function renderTabs(): void {
+  const t = T();
   const items = [
-    { id: 'today', label: '今日' },
-    { id: '7d', label: '近 7 天' },
-    { id: '30d', label: '近 30 天' },
+    { id: 'today', label: t.tabToday },
+    { id: '7d', label: t.tab7 },
+    { id: '30d', label: t.tab30 },
   ];
   if (!tabsHandle) {
     tabsHandle = mountTabs(tabsSlot, {
@@ -506,10 +630,25 @@ function renderTabs(): void {
   tabsHandle.update({ items, activeId: activeTab });
 }
 
+function applyLocale(): void {
+  const t = T();
+  title.textContent = t.title;
+  sessionK.textContent = t.session;
+  balK.textContent = t.balance;
+  todayK.textContent = t.todayCost;
+  daysSection.textContent = t.byDay;
+  modelsSection.textContent = t.byModel;
+  pricingSummary.textContent = t.pricing;
+  refreshHandle?.update({ label: t.refresh });
+  pricingBody.replaceChildren();
+  renderTabs();
+  if (lastSummary) renderAll(lastSummary);
+}
+
 function boot(): void {
   renderTabs();
-  mountButton(refreshSlot, {
-    label: '刷新',
+  refreshHandle = mountButton(refreshSlot, {
+    label: T().refresh,
     size: 'xs',
     variant: 'outline',
     onClick: () => void refresh(),
@@ -521,8 +660,9 @@ function boot(): void {
   }, 60_000);
   setInterval(() => {
     if (countdownTarget) {
-      const to = lastSummary?.now.nextPhase === 'peak' ? '峰时' : '谷时';
-      countdownEl.textContent = `距切换 ${countdown(countdownTarget - Date.now())} → ${to}`;
+      const t = T();
+      const to = lastSummary?.now.nextPhase === 'peak' ? t.peak : t.offpeak;
+      countdownEl.textContent = t.countdown(countdown(countdownTarget - Date.now()), to);
     }
   }, 1_000);
 }
@@ -539,6 +679,10 @@ if (MOCK) {
 } else {
   host.onReady((ctx) => {
     applyHostReady(ctx, document.documentElement);
+    const next = detectLang(ctx.locale);
+    const changed = next !== lang;
+    lang = next;
+    if (changed && mounted) applyLocale();
     const sid = ctx.session?.id ?? null;
     if (sid !== currentSessionId) {
       currentSessionId = sid;
@@ -556,10 +700,7 @@ if (MOCK) {
   });
   setTimeout(() => {
     if (!mounted) {
-      mountEmpty(root, {
-        title: '未连接到 OpenChamber',
-        body: '请在 OpenChamber 的扩展面板中打开此页面；开发预览可加 ?mock=1。',
-      });
+      mountEmpty(root, { title: T().notConnected, body: T().notConnectedBody });
     }
   }, 1_500);
 }
@@ -610,7 +751,7 @@ function mockSummary(): Summary {
       nextChangeAt: next.getTime(),
       nextPhase: cur ? 'offpeak' : 'peak',
     },
-    window: { utc: '周一至周五 01:00–04:00、06:00–10:00 UTC', local: '北京时间 09:00–12:00、14:00–18:00' },
+    window: { utc: L.zh.windowUtc, local: L.zh.windowLocal },
     pricing: {
       flash: { hitOff: 0.02, hitPeak: 0.04, missOff: 1, missPeak: 2, outOff: 4, outPeak: 8 },
       pro: { hitOff: 0.15, hitPeak: 0.3, missOff: 4.5, missPeak: 9, outOff: 13.5, outPeak: 27 },
@@ -660,6 +801,6 @@ function mockSummary(): Summary {
       { model: 'deepseek-v4-flash-vision-exp', tier: 'flash', requests: 5, tokens: totals.tokens, cost: totals.cost * 0.001, official: 0.209, peakOfficial: 0, offOfficial: 0, date: '' },
     ],
     days,
-    notes: ['官方价按人民币价目与峰谷时段逐条重算；缓存写入不计费；OpenCode 记账按 USD→CNY 折算'],
+    notes: [],
   };
 }

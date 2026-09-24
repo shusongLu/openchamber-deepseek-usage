@@ -56,7 +56,7 @@ Folder 安装直接运行本目录：改代码 → `npm run build` → 在面板
 | 数据 | 来源 |
 |---|---|
 | 余额 | `GET https://api.deepseek.com/user/balance`；key 依次尝试 `~/.config/opencode/secrets/deepseek-api-key` → `~/.local/share/opencode/auth.json`（`deepseek.key`） |
-| 用量 | `opencode.db` 的 `message` 表，`modelID LIKE 'deepseek%'` 的 assistant 消息 |
+| 用量 | `opencode.db`：OpenCode 2.x 读 `session_v2` + `session_message`，1.x 读 `session` + `message`（`modelID LIKE 'deepseek%'` 的 assistant 消息） |
 | 官方价 | 元/1M tokens（官方中文价目）：flash `0.02/0.04`（命中）、`1/2`（未命中）、`4/8`（输出）；pro `0.15/0.3`、`4.5/9`、`13.5/27`（谷/峰） |
 | 汇率 | `open.er-api.com`，12 小时缓存，失败回退 6.72；仅用于把 OpenCode 自身的美元记账折算成人民币 |
 

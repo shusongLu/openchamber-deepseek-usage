@@ -2,7 +2,9 @@
  * DeepSeek 用量扩展 —— 本地服务
  *
  * 职责：
- *  1. 只读打开本机 OpenCode 的 opencode.db（SQLite），聚合所有 DeepSeek 消息的 token / cost
+ *  1. 只读打开本机 OpenCode 的 opencode.db，聚合所有 DeepSeek 消息的 token / cost
+ *     - OpenCode 2.x：读 session_v2 + session_message（新表）
+ *     - OpenCode 1.x：读 session + message（旧表，兜底）
  *  2. 按官方峰谷时段重算费用（峰时 = 周一至周五 01:00-04:00、06:00-10:00 UTC）
  *  3. 读取本机 DeepSeek API key（secrets 文件 / auth.json），查询官方余额接口
  *
@@ -98,6 +100,15 @@ function addTokens(a: Tokens, b: Tokens): Tokens {
   return a;
 }
 
+function messageOfficialCost(tokens: Tokens, tier: Tier | null, peak: boolean): number {
+  if (!tier) return 0;
+  const p = PRICING[tier];
+  const hit = peak ? p.hitPeak : p.hitOff;
+  const miss = peak ? p.missPeak : p.missOff;
+  const out = peak ? p.outPeak : p.outOff;
+  return (tokens.input * miss + tokens.cacheRead * hit + (tokens.output + tokens.reasoning) * out) / 1e6;
+}
+
 // ---------------------------------------------------------------- 数据源定位
 
 function findDb(): string | null {
@@ -135,14 +146,182 @@ function resolveApiKey(): { key: string | null; source: string | null } {
   return { key: null, source: null };
 }
 
-// ---------------------------------------------------------------- 用量聚合
+// ---------------------------------------------------------------- 用量数据层（v2 优先，v1 兜底）
+
+type SchemaKind = 'v2' | 'v1';
+
+interface UsageRow {
+  id: string;
+  sid: string;
+  ts: number;
+  model: string;
+  provider: string | null;
+  tokens: Tokens;
+  cost: number;
+}
+
+interface SessionMetaRow {
+  parentId: string | null;
+  title: string;
+  created: number;
+}
+
+interface UsageData {
+  schema: SchemaKind;
+  dbPath: string;
+  generatedAt: number;
+  rows: UsageRow[];
+  byId: Map<string, UsageRow>;
+  meta: Map<string, SessionMetaRow>;
+  children: Map<string, string[]>;
+}
+
+function detectSchema(db: DatabaseSync): SchemaKind {
+  try {
+    const tables = db
+      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name IN ('session_v2','session_message')`)
+      .all() as Array<{ name?: string }>;
+    if (tables.length === 2) {
+      const count = db.prepare('SELECT COUNT(*) AS n FROM session_message').get() as { n?: number } | undefined;
+      if (num(count?.n) > 0) return 'v2';
+    }
+  } catch {
+    /* fall through to v1 */
+  }
+  return 'v1';
+}
+
+function rowToUsage(row: Record<string, unknown>): UsageRow {
+  const ts = num(row.ts);
+  const tokens: Tokens = {
+    input: num(row.input),
+    output: num(row.output),
+    reasoning: num(row.reasoning),
+    cacheRead: num(row.cache_read),
+    cacheWrite: num(row.cache_write),
+  };
+  const model = row.model ? String(row.model) : '';
+  return {
+    id: String(row.id ?? ''),
+    sid: String(row.sid ?? ''),
+    ts,
+    model,
+    provider: row.provider ? String(row.provider) : null,
+    tokens,
+    cost: num(row.cost),
+  };
+}
+
+function loadUsage(dbPath: string): UsageData {
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    const schema = detectSchema(db);
+    const data: UsageData = {
+      schema,
+      dbPath,
+      generatedAt: Date.now(),
+      rows: [],
+      byId: new Map(),
+      meta: new Map(),
+      children: new Map(),
+    };
+
+    if (schema === 'v2') {
+      const rows = db
+        .prepare(
+          `SELECT id,
+                  session_id AS sid,
+                  time_created AS ts,
+                  json_extract(data,'$.model.id') AS model,
+                  json_extract(data,'$.model.providerID') AS provider,
+                  json_extract(data,'$.tokens.input') AS input,
+                  json_extract(data,'$.tokens.output') AS output,
+                  json_extract(data,'$.tokens.reasoning') AS reasoning,
+                  json_extract(data,'$.tokens.cache.read') AS cache_read,
+                  json_extract(data,'$.tokens.cache.write') AS cache_write,
+                  json_extract(data,'$.cost') AS cost
+           FROM session_message
+           WHERE type = 'assistant'
+             AND json_extract(data,'$.model.id') LIKE 'deepseek%'`,
+        )
+        .all() as Array<Record<string, unknown>>;
+      for (const r of rows) {
+        const row = rowToUsage(r);
+        if (!row.id || !row.model) continue;
+        data.rows.push(row);
+        data.byId.set(row.id, row);
+      }
+
+      const sessions = db
+        .prepare('SELECT id, parent_id AS parentId, title, time_created AS created FROM session_v2')
+        .all() as Array<Record<string, unknown>>;
+      for (const s of sessions) {
+        data.meta.set(String(s.id), {
+          parentId: s.parentId ? String(s.parentId) : null,
+          title: String(s.title ?? ''),
+          created: num(s.created),
+        });
+      }
+    } else {
+      const rows = db
+        .prepare(
+          `SELECT id,
+                  session_id AS sid,
+                  time_created AS ts,
+                  json_extract(data,'$.modelID') AS model,
+                  json_extract(data,'$.providerID') AS provider,
+                  json_extract(data,'$.tokens.input') AS input,
+                  json_extract(data,'$.tokens.output') AS output,
+                  json_extract(data,'$.tokens.reasoning') AS reasoning,
+                  json_extract(data,'$.tokens.cache.read') AS cache_read,
+                  json_extract(data,'$.tokens.cache.write') AS cache_write,
+                  json_extract(data,'$.cost') AS cost
+           FROM message
+           WHERE json_extract(data,'$.role') = 'assistant'
+             AND json_extract(data,'$.modelID') LIKE 'deepseek%'`,
+        )
+        .all() as Array<Record<string, unknown>>;
+      for (const r of rows) {
+        const row = rowToUsage(r);
+        if (!row.id || !row.model) continue;
+        data.rows.push(row);
+        data.byId.set(row.id, row);
+      }
+
+      const sessions = db
+        .prepare('SELECT id, parent_id AS parentId, title, time_created AS created FROM session')
+        .all() as Array<Record<string, unknown>>;
+      for (const s of sessions) {
+        data.meta.set(String(s.id), {
+          parentId: s.parentId ? String(s.parentId) : null,
+          title: String(s.title ?? ''),
+          created: num(s.created),
+        });
+      }
+    }
+
+    for (const [id, m] of data.meta) {
+      if (!m.parentId) continue;
+      const list = data.children.get(m.parentId);
+      if (list) list.push(id);
+      else data.children.set(m.parentId, [id]);
+    }
+
+    data.rows.sort((a, b) => a.ts - b.ts);
+    return data;
+  } finally {
+    db.close();
+  }
+}
+
+// ---------------------------------------------------------------- 聚合
 
 interface DayAgg {
   date: string;
   requests: number;
   tokens: Tokens;
   cost: number; // OpenCode 记账（USD）
-  official: number; // 按官方峰谷价重算（USD）
+  official: number; // 按官方峰谷价重算（元）
   peakOfficial: number;
   offOfficial: number;
 }
@@ -160,6 +339,7 @@ interface ModelAgg {
 
 interface UsageSnapshot {
   generatedAt: number;
+  schema: SchemaKind;
   dbPath: string;
   messageTotal: number;
   firstTs: number | null;
@@ -176,38 +356,12 @@ interface UsageSnapshot {
   models: Map<string, ModelAgg>;
 }
 
-function messageOfficialCost(tokens: Tokens, tier: Tier | null, peak: boolean): number {
-  if (!tier) return 0;
-  const p = PRICING[tier];
-  const hit = peak ? p.hitPeak : p.hitOff;
-  const miss = peak ? p.missPeak : p.missOff;
-  const out = peak ? p.outPeak : p.outOff;
-  return (tokens.input * miss + tokens.cacheRead * hit + (tokens.output + tokens.reasoning) * out) / 1e6;
-}
-
-function aggregate(dbPath: string): UsageSnapshot {
-  const db = new DatabaseSync(dbPath, { readOnly: true });
-  const rows = db
-    .prepare(
-      `SELECT time_created AS ts,
-              json_extract(data,'$.modelID') AS model,
-              json_extract(data,'$.tokens.input') AS input,
-              json_extract(data,'$.tokens.output') AS output,
-              json_extract(data,'$.tokens.reasoning') AS reasoning,
-              json_extract(data,'$.tokens.cache.read') AS cache_read,
-              json_extract(data,'$.tokens.cache.write') AS cache_write,
-              json_extract(data,'$.cost') AS cost
-       FROM message
-       WHERE json_extract(data,'$.role') = 'assistant'
-         AND json_extract(data,'$.modelID') LIKE 'deepseek%'`,
-    )
-    .all() as Array<Record<string, unknown>>;
-  db.close();
-
+function buildSnapshot(data: UsageData): UsageSnapshot {
   const snapshot: UsageSnapshot = {
-    generatedAt: Date.now(),
-    dbPath,
-    messageTotal: rows.length,
+    generatedAt: data.generatedAt,
+    schema: data.schema,
+    dbPath: data.dbPath,
+    messageTotal: data.rows.length,
     firstTs: null,
     lastTs: null,
     totals: { requests: 0, tokens: emptyTokens(), cost: 0, official: 0, peakOfficial: 0, offOfficial: 0 },
@@ -215,23 +369,16 @@ function aggregate(dbPath: string): UsageSnapshot {
     models: new Map(),
   };
 
-  for (const row of rows) {
-    const ts = num(row.ts);
+  for (const row of data.rows) {
+    const ts = row.ts;
     if (!ts) continue;
-    const model = String(row.model ?? 'deepseek-未知');
+    const model = row.model;
     const tier = tierOf(model);
-    const tokens: Tokens = {
-      input: num(row.input),
-      output: num(row.output),
-      reasoning: num(row.reasoning),
-      cacheRead: num(row.cache_read),
-      cacheWrite: num(row.cache_write),
-    };
-    const cost = num(row.cost);
+    const tokens = row.tokens;
+    const cost = row.cost;
     const peak = isPeak(new Date(ts));
     const official = messageOfficialCost(tokens, tier, peak);
 
-    snapshot.messageTotal += 0;
     if (snapshot.firstTs === null || ts < snapshot.firstTs) snapshot.firstTs = ts;
     if (snapshot.lastTs === null || ts > snapshot.lastTs) snapshot.lastTs = ts;
 
@@ -246,15 +393,7 @@ function aggregate(dbPath: string): UsageSnapshot {
     const dk = localDate(ts);
     let day = snapshot.days.get(dk);
     if (!day) {
-      day = {
-        date: dk,
-        requests: 0,
-        tokens: emptyTokens(),
-        cost: 0,
-        official: 0,
-        peakOfficial: 0,
-        offOfficial: 0,
-      };
+      day = { date: dk, requests: 0, tokens: emptyTokens(), cost: 0, official: 0, peakOfficial: 0, offOfficial: 0 };
       snapshot.days.set(dk, day);
     }
     day.requests += 1;
@@ -266,16 +405,7 @@ function aggregate(dbPath: string): UsageSnapshot {
 
     let agg = snapshot.models.get(model);
     if (!agg) {
-      agg = {
-        model,
-        tier,
-        requests: 0,
-        tokens: emptyTokens(),
-        cost: 0,
-        official: 0,
-        peakOfficial: 0,
-        offOfficial: 0,
-      };
+      agg = { model, tier, requests: 0, tokens: emptyTokens(), cost: 0, official: 0, peakOfficial: 0, offOfficial: 0 };
       snapshot.models.set(model, agg);
     }
     agg.requests += 1;
@@ -312,80 +442,59 @@ function emptySide(): SessionSide {
   return { requests: 0, tokens: emptyTokens(), official: 0, cost: 0 };
 }
 
-function aggregateSession(dbPath: string, sessionId: string): SessionAgg | null {
-  const db = new DatabaseSync(dbPath, { readOnly: true });
-  try {
-    const meta = db
-      .prepare('SELECT time_created AS created, time_updated AS updated FROM session WHERE id = ?')
-      .get(sessionId) as { created?: unknown; updated?: unknown } | undefined;
-    if (!meta) return null;
-
-    const rows = db
-      .prepare(
-        `WITH RECURSIVE tree(id) AS (
-           SELECT id FROM session WHERE id = ?
-           UNION ALL
-           SELECT s.id FROM session s JOIN tree t ON s.parent_id = t.id
-         )
-         SELECT m.session_id AS sid,
-                m.time_created AS ts,
-                json_extract(m.data,'$.modelID') AS model,
-                json_extract(m.data,'$.tokens.input') AS input,
-                json_extract(m.data,'$.tokens.output') AS output,
-                json_extract(m.data,'$.tokens.reasoning') AS reasoning,
-                json_extract(m.data,'$.tokens.cache.read') AS cache_read,
-                json_extract(m.data,'$.tokens.cache.write') AS cache_write,
-                json_extract(m.data,'$.cost') AS cost
-         FROM message m
-         WHERE m.session_id IN (SELECT id FROM tree)
-           AND json_extract(m.data,'$.role') = 'assistant'`,
-      )
-      .all(sessionId) as Array<Record<string, unknown>>;
-
-    const agg: SessionAgg = {
-      id: sessionId,
-      startedAt: num(meta.created),
-      lastMessageAt: null,
-      ...emptySide(),
-      peakOfficial: 0,
-      offOfficial: 0,
-      main: emptySide(),
-      children: emptySide(),
-    };
-
-    for (const row of rows) {
-      const ts = num(row.ts);
-      const peak = ts ? isPeak(new Date(ts)) : false;
-      const tokens: Tokens = {
-        input: num(row.input),
-        output: num(row.output),
-        reasoning: num(row.reasoning),
-        cacheRead: num(row.cache_read),
-        cacheWrite: num(row.cache_write),
-      };
-      const cost = num(row.cost);
-      const official = messageOfficialCost(tokens, tierOf(String(row.model ?? '')), peak);
-      const side = String(row.sid) === sessionId ? agg.main : agg.children;
-
-      if (ts && (agg.lastMessageAt === null || ts > agg.lastMessageAt)) agg.lastMessageAt = ts;
-
-      agg.requests += 1;
-      addTokens(agg.tokens, tokens);
-      agg.cost += cost;
-      agg.official += official;
-      if (peak) agg.peakOfficial += official;
-      else agg.offOfficial += official;
-
-      side.requests += 1;
-      addTokens(side.tokens, tokens);
-      side.official += official;
-      side.cost += cost;
+function subtreeIds(data: UsageData, sessionId: string): Set<string> {
+  const ids = new Set<string>([sessionId]);
+  const queue = [sessionId];
+  while (queue.length > 0) {
+    const current = queue.shift() as string;
+    for (const child of data.children.get(current) ?? []) {
+      if (!ids.has(child)) {
+        ids.add(child);
+        queue.push(child);
+      }
     }
-
-    return agg;
-  } finally {
-    db.close();
   }
+  return ids;
+}
+
+function aggregateSession(data: UsageData, sessionId: string): SessionAgg | null {
+  const meta = data.meta.get(sessionId);
+  if (!meta) return null;
+
+  const ids = subtreeIds(data, sessionId);
+  const agg: SessionAgg = {
+    id: sessionId,
+    startedAt: meta.created,
+    lastMessageAt: null,
+    ...emptySide(),
+    peakOfficial: 0,
+    offOfficial: 0,
+    main: emptySide(),
+    children: emptySide(),
+  };
+
+  for (const row of data.rows) {
+    if (!ids.has(row.sid)) continue;
+    const peak = row.ts ? isPeak(new Date(row.ts)) : false;
+    const official = messageOfficialCost(row.tokens, tierOf(row.model), peak);
+    const side = row.sid === sessionId ? agg.main : agg.children;
+
+    agg.requests += 1;
+    addTokens(agg.tokens, row.tokens);
+    agg.cost += row.cost;
+    agg.official += official;
+    if (peak) agg.peakOfficial += official;
+    else agg.offOfficial += official;
+
+    if (row.ts && (agg.lastMessageAt === null || row.ts > agg.lastMessageAt)) agg.lastMessageAt = row.ts;
+
+    side.requests += 1;
+    addTokens(side.tokens, row.tokens);
+    side.official += official;
+    side.cost += row.cost;
+  }
+
+  return agg;
 }
 
 function sessionToCny(agg: SessionAgg, fxRate: number): Record<string, unknown> {
@@ -410,28 +519,103 @@ interface SessionRankRow {
   lastMessageAt: number;
 }
 
-function rankSessions(dbPath: string, days: number, limit: number): { sessions: SessionRankRow[] } {
-  const db = new DatabaseSync(dbPath, { readOnly: true });
-  try {
-    const meta = db
-      .prepare('SELECT id, parent_id AS parentId, title, time_created AS created FROM session')
-      .all() as Array<Record<string, unknown>>;
-    const parentOf = new Map<string, string | null>();
-    const titleOf = new Map<string, string>();
-    const createdOf = new Map<string, number>();
-    for (const m of meta) {
-      const id = String(m.id);
-      parentOf.set(id, m.parentId ? String(m.parentId) : null);
-      titleOf.set(id, String(m.title ?? ''));
-      createdOf.set(id, num(m.created));
+function rankSessions(data: UsageData, days: number, limit: number): { sessions: SessionRankRow[] } {
+  const cutoff = Date.now() - days * 86_400_000;
+  const roots = new Map<string, SessionRankRow>();
+
+  for (const row of data.rows) {
+    if (row.ts < cutoff) continue;
+
+    let sid = row.sid;
+    let parent = data.meta.get(sid)?.parentId ?? null;
+    let guard = 0;
+    while (parent && guard < 64) {
+      sid = parent;
+      parent = data.meta.get(sid)?.parentId ?? null;
+      guard += 1;
     }
 
-    const cutoff = Date.now() - days * 86_400_000;
-    const rows = db
+    const meta = data.meta.get(sid);
+    const peak = isPeak(new Date(row.ts));
+    const official = messageOfficialCost(row.tokens, tierOf(row.model), peak);
+
+    let agg = roots.get(sid);
+    if (!agg) {
+      agg = {
+        id: sid,
+        title: meta?.title || sid,
+        official: 0,
+        cost: 0,
+        requests: 0,
+        tokens: emptyTokens(),
+        startedAt: meta?.created ?? row.ts,
+        lastMessageAt: 0,
+      };
+      roots.set(sid, agg);
+    }
+    agg.requests += 1;
+    addTokens(agg.tokens, row.tokens);
+    agg.official += official;
+    agg.cost += row.cost;
+    if (row.ts > agg.lastMessageAt) agg.lastMessageAt = row.ts;
+  }
+
+  const sessions = [...roots.values()].sort((a, b) => b.official - a.official).slice(0, limit);
+  return { sessions };
+}
+
+// ---------------------------------------------------------------- 缓存
+
+let usageCache: { at: number; data: UsageData; snapshot: UsageSnapshot } | null = null;
+const USAGE_TTL_MS = 30_000;
+
+function getUsage(): { data: UsageData; snapshot: UsageSnapshot } | { error: string } {
+  const dbPath = findDb();
+  if (!dbPath) return { error: 'opencode.db not found' };
+  if (usageCache && usageCache.data.dbPath === dbPath && Date.now() - usageCache.at < USAGE_TTL_MS) {
+    return { data: usageCache.data, snapshot: usageCache.snapshot };
+  }
+  const data = loadUsage(dbPath);
+  const snapshot = buildSnapshot(data);
+  usageCache = { at: Date.now(), data, snapshot };
+  return { data, snapshot };
+}
+
+// ---------------------------------------------------------------- 单条消息查询（绕过缓存）
+
+function findMessageOnce(dbPath: string, id: string): UsageRow | null {
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    const schema = detectSchema(db);
+    if (schema === 'v2') {
+      const row = db
+        .prepare(
+          `SELECT id,
+                  session_id AS sid,
+                  time_created AS ts,
+                  json_extract(data,'$.model.id') AS model,
+                  json_extract(data,'$.model.providerID') AS provider,
+                  json_extract(data,'$.tokens.input') AS input,
+                  json_extract(data,'$.tokens.output') AS output,
+                  json_extract(data,'$.tokens.reasoning') AS reasoning,
+                  json_extract(data,'$.tokens.cache.read') AS cache_read,
+                  json_extract(data,'$.tokens.cache.write') AS cache_write,
+                  json_extract(data,'$.cost') AS cost
+           FROM session_message
+           WHERE id = ? AND type = 'assistant'`,
+        )
+        .get(id) as Record<string, unknown> | undefined;
+      if (!row) return null;
+      const parsed = rowToUsage(row);
+      return parsed.model ? parsed : null;
+    }
+    const row = db
       .prepare(
-        `SELECT session_id AS sid,
+        `SELECT id,
+                session_id AS sid,
                 time_created AS ts,
                 json_extract(data,'$.modelID') AS model,
+                json_extract(data,'$.providerID') AS provider,
                 json_extract(data,'$.tokens.input') AS input,
                 json_extract(data,'$.tokens.output') AS output,
                 json_extract(data,'$.tokens.reasoning') AS reasoning,
@@ -439,79 +623,30 @@ function rankSessions(dbPath: string, days: number, limit: number): { sessions: 
                 json_extract(data,'$.tokens.cache.write') AS cache_write,
                 json_extract(data,'$.cost') AS cost
          FROM message
-         WHERE json_extract(data,'$.role') = 'assistant'
-           AND json_extract(data,'$.modelID') LIKE 'deepseek%'
-           AND time_created >= ?`,
+         WHERE id = ? AND json_extract(data,'$.role') = 'assistant'`,
       )
-      .all(cutoff) as Array<Record<string, unknown>>;
-
-    const roots = new Map<string, SessionRankRow>();
-
-    for (const row of rows) {
-      let sid = String(row.sid);
-      let parent = parentOf.get(sid) ?? null;
-      let guard = 0;
-      while (parent && guard < 64) {
-        sid = parent;
-        parent = parentOf.get(sid) ?? null;
-        guard += 1;
-      }
-
-      const ts = num(row.ts);
-      const peak = ts ? isPeak(new Date(ts)) : false;
-      const tokens: Tokens = {
-        input: num(row.input),
-        output: num(row.output),
-        reasoning: num(row.reasoning),
-        cacheRead: num(row.cache_read),
-        cacheWrite: num(row.cache_write),
-      };
-      const official = messageOfficialCost(tokens, tierOf(String(row.model ?? '')), peak);
-      const cost = num(row.cost);
-
-      let agg = roots.get(sid);
-      if (!agg) {
-        agg = {
-          id: sid,
-          title: titleOf.get(sid) ?? sid,
-          official: 0,
-          cost: 0,
-          requests: 0,
-          tokens: emptyTokens(),
-          startedAt: createdOf.get(sid) ?? ts,
-          lastMessageAt: 0,
-        };
-        roots.set(sid, agg);
-      }
-      agg.requests += 1;
-      addTokens(agg.tokens, tokens);
-      agg.official += official;
-      agg.cost += cost;
-      if (ts > agg.lastMessageAt) agg.lastMessageAt = ts;
-    }
-
-    const sessions = [...roots.values()].sort((a, b) => b.official - a.official).slice(0, limit);
-    return { sessions };
+      .get(id) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    const parsed = rowToUsage(row);
+    return parsed.model ? parsed : null;
   } finally {
     db.close();
   }
 }
 
-// ---------------------------------------------------------------- 缓存
-
-let usageCache: { at: number; snapshot: UsageSnapshot } | null = null;
-const USAGE_TTL_MS = 30_000;
-
-function getUsage(): UsageSnapshot | { dbPath: null; error: string } {
-  const dbPath = findDb();
-  if (!dbPath) return { dbPath: null, error: 'opencode.db not found' };
-  if (usageCache && usageCache.snapshot.dbPath === dbPath && Date.now() - usageCache.at < USAGE_TTL_MS) {
-    return usageCache.snapshot;
+function messageExists(dbPath: string, id: string): boolean {
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    const schema = detectSchema(db);
+    const table = schema === 'v2' ? 'session_message' : 'message';
+    const row = db.prepare(`SELECT 1 AS ok FROM ${table} WHERE id = ?`).get(id);
+    return Boolean(row);
+  } finally {
+    db.close();
   }
-  const snapshot = aggregate(dbPath);
-  usageCache = { at: Date.now(), snapshot };
-  return snapshot;
 }
+
+// ---------------------------------------------------------------- 余额与汇率
 
 interface BalanceResult {
   ok: boolean;
@@ -529,7 +664,6 @@ interface BalanceResult {
 let balanceCache: { at: number; data: BalanceResult } | null = null;
 const BALANCE_TTL_MS = 60_000;
 
-/** USD→CNY 汇率（用于折算 OpenCode 自身的美元记账） */
 const FX_FALLBACK = 6.72;
 let fxCache: { at: number; rate: number; source: string } | null = null;
 
@@ -606,15 +740,7 @@ function serializeDays(snapshot: UsageSnapshot, days: number, fxRate: number): u
     out.push(
       agg
         ? { ...agg, cost: agg.cost * fxRate }
-        : {
-            date: key,
-            requests: 0,
-            tokens: emptyTokens(),
-            cost: 0,
-            official: 0,
-            peakOfficial: 0,
-            offOfficial: 0,
-          },
+        : { date: key, requests: 0, tokens: emptyTokens(), cost: 0, official: 0, peakOfficial: 0, offOfficial: 0 },
     );
   }
   return out;
@@ -648,9 +774,10 @@ async function buildSummary(days: number, sessionId?: string | null): Promise<Re
     };
   }
 
-  const snapshot = usage;
+  const { data, snapshot } = usage;
   const todayAgg = snapshot.days.get(localDate(now)) ?? null;
-  const sessionAgg = sessionId ? aggregateSession(snapshot.dbPath, sessionId) : null;
+  const sessionAgg = sessionId ? aggregateSession(data, sessionId) : null;
+
   return {
     ok: true,
     generatedAt: now,
@@ -669,6 +796,7 @@ async function buildSummary(days: number, sessionId?: string | null): Promise<Re
     session: sessionAgg ? sessionToCny(sessionAgg, fx.rate) : null,
     db: {
       path: snapshot.dbPath,
+      schema: snapshot.schema,
       messages: snapshot.messageTotal,
       firstTs: snapshot.firstTs,
       lastTs: snapshot.lastTs,
@@ -680,7 +808,7 @@ async function buildSummary(days: number, sessionId?: string | null): Promise<Re
       .sort((a, b) => b.official - a.official || b.requests - a.requests)
       .map((m) => ({ ...m, cost: m.cost * fx.rate })),
     days: serializeDays(snapshot, days, fx.rate),
-    notes: ['官方价按人民币价目与峰谷时段逐条重算；缓存写入不计费；OpenCode 记账按 USD→CNY 折算'],
+    notes: ['官方价按人民币价目与峰谷时段逐条重算；缓存不计写入费；OpenCode 记账按 USD→CNY 折算'],
   };
 }
 
@@ -709,6 +837,7 @@ const server = createServer((req, res) => {
         res.end('ok');
         return;
       }
+
       if (url.pathname === '/summary') {
         const days = Math.min(Math.max(Number(url.searchParams.get('days') || 30) || 30, 1), 365);
         const sessionRaw = url.searchParams.get('session') || '';
@@ -716,6 +845,7 @@ const server = createServer((req, res) => {
         sendJson(res, 200, await buildSummary(days, sessionId));
         return;
       }
+
       if (url.pathname === '/message') {
         const id = (url.searchParams.get('id') || '').trim();
         if (!/^[A-Za-z0-9_-]{1,80}$/.test(id)) {
@@ -727,69 +857,41 @@ const server = createServer((req, res) => {
           sendJson(res, 404, { ok: false, error: 'db-not-found' });
           return;
         }
-        const db = new DatabaseSync(dbPath, { readOnly: true });
-        let row: Record<string, unknown> | undefined;
-        try {
-          row = db
-            .prepare(
-              `SELECT session_id AS sid,
-                      time_created AS ts,
-                      json_extract(data,'$.role') AS role,
-                      json_extract(data,'$.modelID') AS model,
-                      json_extract(data,'$.providerID') AS provider,
-                      json_extract(data,'$.tokens.input') AS input,
-                      json_extract(data,'$.tokens.output') AS output,
-                      json_extract(data,'$.tokens.reasoning') AS reasoning,
-                      json_extract(data,'$.tokens.cache.read') AS cache_read,
-                      json_extract(data,'$.tokens.cache.write') AS cache_write,
-                      json_extract(data,'$.cost') AS cost
-               FROM message WHERE id = ?`,
-            )
-            .get(id) as Record<string, unknown> | undefined;
-        } finally {
-          db.close();
-        }
-        if (!row || row.role !== 'assistant' || !row.model) {
-          sendJson(res, 404, { ok: false, error: 'not-found' });
+        const row = findMessageOnce(dbPath, id);
+        if (!row) {
+          sendJson(res, 404, { ok: false, error: messageExists(dbPath, id) ? 'not-deepseek' : 'not-found' });
           return;
         }
-        const ts = num(row.ts);
-        const tokens: Tokens = {
-          input: num(row.input),
-          output: num(row.output),
-          reasoning: num(row.reasoning),
-          cacheRead: num(row.cache_read),
-          cacheWrite: num(row.cache_write),
-        };
-        const peak = ts ? isPeak(new Date(ts)) : false;
-        const tier = tierOf(String(row.model));
-        const official = messageOfficialCost(tokens, tier, peak);
+        const peak = row.ts ? isPeak(new Date(row.ts)) : false;
+        const tier = tierOf(row.model);
+        const official = messageOfficialCost(row.tokens, tier, peak);
         const fx = await getFxRate();
         sendJson(res, 200, {
           ok: true,
           id,
           sessionId: row.sid,
-          ts,
-          model: String(row.model),
-          provider: row.provider ?? null,
+          ts: row.ts,
+          model: row.model,
+          provider: row.provider,
           tier,
           peak,
-          tokens,
+          tokens: row.tokens,
           official,
-          cost: num(row.cost) * fx.rate,
+          cost: row.cost * fx.rate,
           fx: { usdCny: Number(fx.rate.toFixed(4)), source: fx.source },
         });
         return;
       }
+
       if (url.pathname === '/sessions') {
         const daysParam = Math.min(Math.max(Number(url.searchParams.get('days') || 30) || 30, 1), 365);
         const limit = Math.min(Math.max(Number(url.searchParams.get('limit') || 20) || 20, 1), 100);
-        const dbPath = findDb();
-        if (!dbPath) {
-          sendJson(res, 404, { ok: false, error: 'db-not-found' });
+        const usage = getUsage();
+        if ('error' in usage) {
+          sendJson(res, 404, { ok: false, error: usage.error });
           return;
         }
-        const { sessions } = rankSessions(dbPath, daysParam, limit);
+        const { sessions } = rankSessions(usage.data, daysParam, limit);
         const fx = await getFxRate();
         sendJson(res, 200, {
           ok: true,
@@ -799,10 +901,12 @@ const server = createServer((req, res) => {
         });
         return;
       }
+
       if (url.pathname === '/balance') {
         sendJson(res, 200, await getBalance());
         return;
       }
+
       sendJson(res, 404, { error: 'not-found' });
     } catch (error) {
       sendJson(res, 500, { error: error instanceof Error ? error.message : String(error) });

@@ -55,7 +55,7 @@ Folder 安装直接运行本目录：改代码 → `npm run build` → 在面板
 
 | 数据 | 来源 |
 |---|---|
-| 余额 | `GET https://api.deepseek.com/user/balance`；key 依次尝试 `~/.config/opencode/secrets/deepseek-api-key` → `~/.local/share/opencode/auth.json`（`deepseek.key`） |
+| 余额 | `GET https://api.deepseek.com/user/balance`；key 依次尝试 `DEEPSEEK_API_KEY` → `~/.config/opencode/secrets/deepseek-api-key` → `opencode.db` 的 `credential` 表（OpenCode 2.x 凭据，`integration_id='deepseek'`）→ `~/.local/share/opencode/auth.json`（`deepseek.key`，旧版 OpenCode 1.x） |
 | 用量 | `opencode.db`：OpenCode 2.x 读 `session_v2` + `session_message`，1.x 读 `session` + `message`（`modelID LIKE 'deepseek%'` 的 assistant 消息） |
 | 官方价 | 元/1M tokens（官方中文价目）：flash `0.02/0.04`（命中）、`1/2`（未命中）、`4/8`（输出）；pro `0.15/0.3`、`4.5/9`、`13.5/27`（谷/峰） |
 | 汇率 | `open.er-api.com`，12 小时缓存，失败回退 6.72；仅用于把 OpenCode 自身的美元记账折算成人民币 |
@@ -66,7 +66,7 @@ Folder 安装直接运行本目录：改代码 → `npm run build` → 在面板
 
 An OpenChamber extension: a rail panel, a message-menu action and a full-screen dashboard for your DeepSeek balance, usage and peak/off-peak billing (CNY).
 
-- **Balance** from the official `GET /user/balance` endpoint; the local service finds your API key automatically (`~/.config/opencode/secrets/deepseek-api-key`, then `~/.local/share/opencode/auth.json`)
+- **Balance** from the official `GET /user/balance` endpoint; the local service finds your API key automatically (`DEEPSEEK_API_KEY`, then `~/.config/opencode/secrets/deepseek-api-key`, then `opencode.db` → `credential` table where OpenCode 2.x keeps credentials, then the legacy `~/.local/share/opencode/auth.json`)
 - **Peak / off-peak**: current phase, countdown and the official price table. Peak hours are Mon–Fri 01:00–04:00 & 06:00–10:00 UTC (Beijing 09:00–12:00, 14:00–18:00); off-peak is half price
 - **Usage** aggregated read-only from the local `opencode.db`: current session (incl. subagents, start time and duration), today / 7 days / 30 days, daily bars, per-model breakdown, official CNY cost recomputed per message versus OpenCode's own USD record (converted at the live rate)
 - **Message action**: “本条 DeepSeek 费用 / Message cost” inside any assistant message's `…` menu — a background action that shows a persistent, copyable toast without opening a panel

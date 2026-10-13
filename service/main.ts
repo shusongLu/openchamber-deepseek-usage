@@ -6,7 +6,9 @@
  *     - OpenCode 2.x：读 session_v2 + session_message（新表）
  *     - OpenCode 1.x：读 session + message（旧表，兜底）
  *  2. 按官方峰谷时段重算费用（峰时 = 周一至周五 01:00-04:00、06:00-10:00 UTC）
- *  3. 读取本机 DeepSeek API key（secrets 文件 / auth.json），查询官方余额接口
+ *  3. 读取本机 DeepSeek API key（env / secrets 文件 / opencode.db credential / auth.json），
+ *     查询官方余额接口
+ *     - OpenCode 2.x 把凭据从 auth.json 迁移进 opencode.db 的 credential 表，auth.json 不再更新
  *
  * 运行方式：由 OpenChamber host 以 Electron-as-Node 启动，
  * 端口与鉴权 token 来自 OPENCHAMBER_SERVICE_PORT / OPENCHAMBER_SERVICE_TOKEN。
@@ -120,6 +122,53 @@ function findDb(): string | null {
   return null;
 }
 
+/** DeepSeek 凭据在 credential.value 中的形状：{ type:'key', key } 或 { type:'oauth', access, refresh } */
+function credentialKey(raw: unknown): string | null {
+  if (typeof raw !== 'string' || !raw.trim()) return null;
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    for (const candidate of [parsed.key, parsed.access, parsed.access_token]) {
+      if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+    }
+  } catch {
+    /* not JSON — fall through */
+  }
+  return null;
+}
+
+/**
+ * OpenCode 2.x 自己持有凭据：启动时把 auth.json 导入一次，之后只写 opencode.db 的
+ * credential 表（对应服务端 `/api/credential`）。这里直接只读该表，取 deepseek 的 key。
+ */
+function credentialFromDb(dbPath: string): { key: string; source: string } | null {
+  let db: DatabaseSync | null = null;
+  try {
+    db = new DatabaseSync(dbPath, { readOnly: true });
+    const hasTable = db
+      .prepare(`SELECT 1 AS ok FROM sqlite_master WHERE type='table' AND name='credential'`)
+      .get();
+    if (!hasTable) return null;
+    const rows = db
+      .prepare(
+        `SELECT value
+           FROM credential
+          WHERE integration_id = 'deepseek'
+            AND (active IS NULL OR active = 1)
+          ORDER BY time_updated DESC`,
+      )
+      .all() as Array<{ value?: string }>;
+    for (const row of rows) {
+      const key = credentialKey(row.value);
+      if (key) return { key, source: 'opencode.db' };
+    }
+  } catch {
+    /* ignore */
+  } finally {
+    db?.close();
+  }
+  return null;
+}
+
 function resolveApiKey(): { key: string | null; source: string | null } {
   const env = (process.env.DEEPSEEK_API_KEY || '').trim();
   if (env) return { key: env, source: 'env' };
@@ -130,6 +179,12 @@ function resolveApiKey(): { key: string | null; source: string | null } {
     if (v) return { key: v, source: 'secrets/deepseek-api-key' };
   } catch {
     /* ignore */
+  }
+
+  const dbPath = findDb();
+  if (dbPath) {
+    const stored = credentialFromDb(dbPath);
+    if (stored) return stored;
   }
 
   const authFile = join(homedir(), '.local', 'share', 'opencode', 'auth.json');

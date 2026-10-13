@@ -71,6 +71,40 @@ function findDb() {
   for (const c of candidates) if ((0, import_node_fs.existsSync)(c)) return c;
   return null;
 }
+function credentialKey(raw) {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    for (const candidate of [parsed.key, parsed.access, parsed.access_token]) {
+      if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+    }
+  } catch {
+  }
+  return null;
+}
+function credentialFromDb(dbPath) {
+  let db = null;
+  try {
+    db = new import_node_sqlite.DatabaseSync(dbPath, { readOnly: true });
+    const hasTable = db.prepare(`SELECT 1 AS ok FROM sqlite_master WHERE type='table' AND name='credential'`).get();
+    if (!hasTable) return null;
+    const rows = db.prepare(
+      `SELECT value
+           FROM credential
+          WHERE integration_id = 'deepseek'
+            AND (active IS NULL OR active = 1)
+          ORDER BY time_updated DESC`
+    ).all();
+    for (const row of rows) {
+      const key = credentialKey(row.value);
+      if (key) return { key, source: "opencode.db" };
+    }
+  } catch {
+  } finally {
+    db?.close();
+  }
+  return null;
+}
 function resolveApiKey() {
   const env = (process.env.DEEPSEEK_API_KEY || "").trim();
   if (env) return { key: env, source: "env" };
@@ -79,6 +113,11 @@ function resolveApiKey() {
     const v = (0, import_node_fs.readFileSync)(secretFile, "utf8").trim();
     if (v) return { key: v, source: "secrets/deepseek-api-key" };
   } catch {
+  }
+  const dbPath = findDb();
+  if (dbPath) {
+    const stored = credentialFromDb(dbPath);
+    if (stored) return stored;
   }
   const authFile = (0, import_node_path.join)((0, import_node_os.homedir)(), ".local", "share", "opencode", "auth.json");
   try {

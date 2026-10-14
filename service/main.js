@@ -8,6 +8,9 @@ var import_node_path = require("node:path");
 var import_node_sqlite = require("node:sqlite");
 var PORT = Number(process.env.OPENCHAMBER_SERVICE_PORT || 0);
 var TOKEN = process.env.OPENCHAMBER_SERVICE_TOKEN || "";
+var USAGE_TTL_MS = 6e4;
+var USAGE_IDLE_RELEASE_MS = 10 * 6e4;
+var REFRESH_OVERLAP_MS = 2 * 36e5;
 var PRICING = {
   flash: { hitOff: 0.02, hitPeak: 0.04, missOff: 1, missPeak: 2, outOff: 4, outPeak: 8 },
   pro: { hitOff: 0.15, hitPeak: 0.3, missOff: 4.5, missPeak: 9, outOff: 13.5, outPeak: 27 }
@@ -161,93 +164,143 @@ function rowToUsage(row) {
     cost: num(row.cost)
   };
 }
+function openDb(dbPath) {
+  return new import_node_sqlite.DatabaseSync(dbPath, { readOnly: true });
+}
+var ROW_SELECT_V2 = `SELECT id,
+        session_id AS sid,
+        time_created AS ts,
+        json_extract(data,'$.model.id') AS model,
+        json_extract(data,'$.model.providerID') AS provider,
+        json_extract(data,'$.tokens.input') AS input,
+        json_extract(data,'$.tokens.output') AS output,
+        json_extract(data,'$.tokens.reasoning') AS reasoning,
+        json_extract(data,'$.tokens.cache.read') AS cache_read,
+        json_extract(data,'$.tokens.cache.write') AS cache_write,
+        json_extract(data,'$.cost') AS cost
+ FROM session_message
+ WHERE type = 'assistant'
+   AND json_extract(data,'$.model.id') LIKE 'deepseek%'`;
+var ROW_SELECT_V1 = `SELECT id,
+        session_id AS sid,
+        time_created AS ts,
+        json_extract(data,'$.modelID') AS model,
+        json_extract(data,'$.providerID') AS provider,
+        json_extract(data,'$.tokens.input') AS input,
+        json_extract(data,'$.tokens.output') AS output,
+        json_extract(data,'$.tokens.reasoning') AS reasoning,
+        json_extract(data,'$.tokens.cache.read') AS cache_read,
+        json_extract(data,'$.tokens.cache.write') AS cache_write,
+        json_extract(data,'$.cost') AS cost
+ FROM message
+ WHERE json_extract(data,'$.role') = 'assistant'
+   AND json_extract(data,'$.modelID') LIKE 'deepseek%'`;
+function loadRows(db, schema, sinceMs) {
+  const base = schema === "v2" ? ROW_SELECT_V2 : ROW_SELECT_V1;
+  const useSince = typeof sinceMs === "number" && sinceMs > 0;
+  const stmt = db.prepare(useSince ? `${base} AND time_created >= ?` : base);
+  const raw = useSince ? stmt.all(sinceMs) : stmt.all();
+  const rows = [];
+  for (const r of raw) {
+    const row = rowToUsage(r);
+    if (!row.id || !row.model) continue;
+    rows.push(row);
+  }
+  return rows;
+}
+function loadMeta(db, schema) {
+  const meta = /* @__PURE__ */ new Map();
+  const children = /* @__PURE__ */ new Map();
+  const sessions = db.prepare(
+    schema === "v2" ? "SELECT id, parent_id AS parentId, title, time_created AS created FROM session_v2" : "SELECT id, parent_id AS parentId, title, time_created AS created FROM session"
+  ).all();
+  for (const s of sessions) {
+    meta.set(String(s.id), {
+      parentId: s.parentId ? String(s.parentId) : null,
+      title: String(s.title ?? ""),
+      created: num(s.created)
+    });
+  }
+  for (const [id, m] of meta) {
+    if (!m.parentId) continue;
+    const list = children.get(m.parentId);
+    if (list) list.push(id);
+    else children.set(m.parentId, [id]);
+  }
+  return { meta, children };
+}
 function loadUsage(dbPath) {
-  const db = new import_node_sqlite.DatabaseSync(dbPath, { readOnly: true });
+  const db = openDb(dbPath);
   try {
     const schema = detectSchema(db);
-    const data = {
+    const rows = loadRows(db, schema);
+    const { meta, children } = loadMeta(db, schema);
+    return {
       schema,
       dbPath,
       generatedAt: Date.now(),
-      rows: [],
-      byId: /* @__PURE__ */ new Map(),
-      meta: /* @__PURE__ */ new Map(),
-      children: /* @__PURE__ */ new Map()
+      rows,
+      byId: new Map(rows.map((r) => [r.id, r])),
+      meta,
+      children
     };
-    if (schema === "v2") {
-      const rows = db.prepare(
-        `SELECT id,
-                  session_id AS sid,
-                  time_created AS ts,
-                  json_extract(data,'$.model.id') AS model,
-                  json_extract(data,'$.model.providerID') AS provider,
-                  json_extract(data,'$.tokens.input') AS input,
-                  json_extract(data,'$.tokens.output') AS output,
-                  json_extract(data,'$.tokens.reasoning') AS reasoning,
-                  json_extract(data,'$.tokens.cache.read') AS cache_read,
-                  json_extract(data,'$.tokens.cache.write') AS cache_write,
-                  json_extract(data,'$.cost') AS cost
-           FROM session_message
-           WHERE type = 'assistant'
-             AND json_extract(data,'$.model.id') LIKE 'deepseek%'`
-      ).all();
-      for (const r of rows) {
-        const row = rowToUsage(r);
-        if (!row.id || !row.model) continue;
-        data.rows.push(row);
-        data.byId.set(row.id, row);
-      }
-      const sessions = db.prepare("SELECT id, parent_id AS parentId, title, time_created AS created FROM session_v2").all();
-      for (const s of sessions) {
-        data.meta.set(String(s.id), {
-          parentId: s.parentId ? String(s.parentId) : null,
-          title: String(s.title ?? ""),
-          created: num(s.created)
-        });
-      }
-    } else {
-      const rows = db.prepare(
-        `SELECT id,
-                  session_id AS sid,
-                  time_created AS ts,
-                  json_extract(data,'$.modelID') AS model,
-                  json_extract(data,'$.providerID') AS provider,
-                  json_extract(data,'$.tokens.input') AS input,
-                  json_extract(data,'$.tokens.output') AS output,
-                  json_extract(data,'$.tokens.reasoning') AS reasoning,
-                  json_extract(data,'$.tokens.cache.read') AS cache_read,
-                  json_extract(data,'$.tokens.cache.write') AS cache_write,
-                  json_extract(data,'$.cost') AS cost
-           FROM message
-           WHERE json_extract(data,'$.role') = 'assistant'
-             AND json_extract(data,'$.modelID') LIKE 'deepseek%'`
-      ).all();
-      for (const r of rows) {
-        const row = rowToUsage(r);
-        if (!row.id || !row.model) continue;
-        data.rows.push(row);
-        data.byId.set(row.id, row);
-      }
-      const sessions = db.prepare("SELECT id, parent_id AS parentId, title, time_created AS created FROM session").all();
-      for (const s of sessions) {
-        data.meta.set(String(s.id), {
-          parentId: s.parentId ? String(s.parentId) : null,
-          title: String(s.title ?? ""),
-          created: num(s.created)
-        });
-      }
-    }
-    for (const [id, m] of data.meta) {
-      if (!m.parentId) continue;
-      const list = data.children.get(m.parentId);
-      if (list) list.push(id);
-      else data.children.set(m.parentId, [id]);
-    }
-    data.rows.sort((a, b) => a.ts - b.ts);
-    return data;
   } finally {
     db.close();
   }
+}
+function emptyDay(date) {
+  return { date, requests: 0, tokens: emptyTokens(), cost: 0, official: 0, peakOfficial: 0, offOfficial: 0 };
+}
+function emptyModel(model, tier) {
+  return { model, tier, requests: 0, tokens: emptyTokens(), cost: 0, official: 0, peakOfficial: 0, offOfficial: 0 };
+}
+function applySnapshotDelta(snapshot, row, sign) {
+  const ts = row.ts;
+  if (!ts) return;
+  const peak = isPeak(new Date(ts));
+  const official = messageOfficialCost(row.tokens, tierOf(row.model), peak) * sign;
+  const signedTokens = {
+    input: row.tokens.input * sign,
+    output: row.tokens.output * sign,
+    reasoning: row.tokens.reasoning * sign,
+    cacheRead: row.tokens.cacheRead * sign,
+    cacheWrite: row.tokens.cacheWrite * sign
+  };
+  const totals = snapshot.totals;
+  totals.requests += sign;
+  addTokens(totals.tokens, signedTokens);
+  totals.cost += row.cost * sign;
+  totals.official += official;
+  if (peak) totals.peakOfficial += official;
+  else totals.offOfficial += official;
+  snapshot.messageTotal += sign;
+  if (sign > 0) {
+    if (snapshot.firstTs === null || ts < snapshot.firstTs) snapshot.firstTs = ts;
+    if (snapshot.lastTs === null || ts > snapshot.lastTs) snapshot.lastTs = ts;
+  }
+  const dk = localDate(ts);
+  let day = snapshot.days.get(dk);
+  if (!day) {
+    day = emptyDay(dk);
+    snapshot.days.set(dk, day);
+  }
+  day.requests += sign;
+  addTokens(day.tokens, signedTokens);
+  day.cost += row.cost * sign;
+  day.official += official;
+  if (peak) day.peakOfficial += official;
+  else day.offOfficial += official;
+  let agg = snapshot.models.get(row.model);
+  if (!agg) {
+    agg = emptyModel(row.model, tierOf(row.model));
+    snapshot.models.set(row.model, agg);
+  }
+  agg.requests += sign;
+  addTokens(agg.tokens, signedTokens);
+  agg.cost += row.cost * sign;
+  agg.official += official;
+  if (peak) agg.peakOfficial += official;
+  else agg.offOfficial += official;
 }
 function buildSnapshot(data) {
   const snapshot = {
@@ -264,12 +317,10 @@ function buildSnapshot(data) {
   for (const row of data.rows) {
     const ts = row.ts;
     if (!ts) continue;
-    const model = row.model;
-    const tier = tierOf(model);
     const tokens = row.tokens;
     const cost = row.cost;
     const peak = isPeak(new Date(ts));
-    const official = messageOfficialCost(tokens, tier, peak);
+    const official = messageOfficialCost(tokens, tierOf(row.model), peak);
     if (snapshot.firstTs === null || ts < snapshot.firstTs) snapshot.firstTs = ts;
     if (snapshot.lastTs === null || ts > snapshot.lastTs) snapshot.lastTs = ts;
     const totals = snapshot.totals;
@@ -282,7 +333,7 @@ function buildSnapshot(data) {
     const dk = localDate(ts);
     let day = snapshot.days.get(dk);
     if (!day) {
-      day = { date: dk, requests: 0, tokens: emptyTokens(), cost: 0, official: 0, peakOfficial: 0, offOfficial: 0 };
+      day = emptyDay(dk);
       snapshot.days.set(dk, day);
     }
     day.requests += 1;
@@ -291,10 +342,10 @@ function buildSnapshot(data) {
     day.official += official;
     if (peak) day.peakOfficial += official;
     else day.offOfficial += official;
-    let agg = snapshot.models.get(model);
+    let agg = snapshot.models.get(row.model);
     if (!agg) {
-      agg = { model, tier, requests: 0, tokens: emptyTokens(), cost: 0, official: 0, peakOfficial: 0, offOfficial: 0 };
-      snapshot.models.set(model, agg);
+      agg = emptyModel(row.model, tierOf(row.model));
+      snapshot.models.set(row.model, agg);
     }
     agg.requests += 1;
     addTokens(agg.tokens, tokens);
@@ -304,6 +355,9 @@ function buildSnapshot(data) {
     else agg.offOfficial += official;
   }
   return snapshot;
+}
+function sameRow(a, b) {
+  return a.ts === b.ts && a.sid === b.sid && a.model === b.model && a.provider === b.provider && a.cost === b.cost && a.tokens.input === b.tokens.input && a.tokens.output === b.tokens.output && a.tokens.reasoning === b.tokens.reasoning && a.tokens.cacheRead === b.tokens.cacheRead && a.tokens.cacheWrite === b.tokens.cacheWrite;
 }
 function emptySide() {
   return { requests: 0, tokens: emptyTokens(), official: 0, cost: 0 };
@@ -403,18 +457,69 @@ function rankSessions(data, days, limit) {
   return { sessions };
 }
 var usageCache = null;
-var USAGE_TTL_MS = 3e4;
+function refreshUsage(cache, dbPath) {
+  const db = openDb(dbPath);
+  try {
+    const schema = detectSchema(db);
+    if (schema !== cache.data.schema) return false;
+    const cursor = cache.snapshot.lastTs ?? 0;
+    const since = Math.max(0, cursor - REFRESH_OVERLAP_MS);
+    const fresh = loadRows(db, schema, since);
+    const { meta, children } = loadMeta(db, schema);
+    cache.data.meta = meta;
+    cache.data.children = children;
+    cache.data.generatedAt = Date.now();
+    for (const row of fresh) {
+      const existing = cache.data.byId.get(row.id);
+      if (existing) {
+        if (sameRow(existing, row)) continue;
+        applySnapshotDelta(cache.snapshot, existing, -1);
+        existing.sid = row.sid;
+        existing.ts = row.ts;
+        existing.model = row.model;
+        existing.provider = row.provider;
+        existing.tokens = row.tokens;
+        existing.cost = row.cost;
+        applySnapshotDelta(cache.snapshot, existing, 1);
+      } else {
+        cache.data.byId.set(row.id, row);
+        cache.data.rows.push(row);
+        applySnapshotDelta(cache.snapshot, row, 1);
+      }
+    }
+    cache.snapshot.generatedAt = cache.data.generatedAt;
+    return true;
+  } finally {
+    db.close();
+  }
+}
 function getUsage() {
   const dbPath = findDb();
   if (!dbPath) return { error: "opencode.db not found" };
-  if (usageCache && usageCache.data.dbPath === dbPath && Date.now() - usageCache.at < USAGE_TTL_MS) {
-    return { data: usageCache.data, snapshot: usageCache.snapshot };
+  const now = Date.now();
+  if (usageCache && usageCache.data.dbPath === dbPath) {
+    usageCache.lastUsedAt = now;
+    if (now - usageCache.at < USAGE_TTL_MS) return usageCache;
+    try {
+      if (refreshUsage(usageCache, dbPath)) {
+        usageCache.at = now;
+        return usageCache;
+      }
+    } catch {
+      usageCache.at = now - USAGE_TTL_MS + 1e4;
+      return usageCache;
+    }
   }
   const data = loadUsage(dbPath);
   const snapshot = buildSnapshot(data);
-  usageCache = { at: Date.now(), data, snapshot };
-  return { data, snapshot };
+  usageCache = { at: now, lastUsedAt: now, data, snapshot };
+  return usageCache;
 }
+setInterval(() => {
+  if (usageCache && Date.now() - usageCache.lastUsedAt > USAGE_IDLE_RELEASE_MS) {
+    usageCache = null;
+  }
+}, 6e4).unref();
 function findMessageOnce(dbPath, id) {
   const db = new import_node_sqlite.DatabaseSync(dbPath, { readOnly: true });
   try {

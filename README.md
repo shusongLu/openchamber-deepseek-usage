@@ -71,6 +71,12 @@ Folder 安装直接运行本目录：改代码 → `npm run build` → 在面板
 
 注意：OpenCode 自身按静态价目记账（美元），与官方实时峰谷价存在差异，面板两者都显示为人民币。
 
+## 性能
+
+- service 首次请求全量扫描一次（约 3.4s / 3.4 万条消息），之后每分钟只做**增量刷新**（走 `time_created` 索引，约 0.3s）
+- 缓存 60 秒；**10 分钟无请求自动释放**内存
+- 面板、看板、状态区块共用同一份缓存，多个界面同时开着也不会叠加扫描
+
 ## English
 
 An OpenChamber extension: a rail panel, a chat Work Status section, a message-menu action and a full-screen dashboard for your DeepSeek balance, usage and peak/off-peak billing (CNY).

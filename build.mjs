@@ -36,6 +36,15 @@ await build({
 
 await build({
   ...shared,
+  entryPoints: ['status/main.ts'],
+  outfile: 'status/main.js',
+  format: 'iife',
+  platform: 'browser',
+  target: 'chrome120',
+});
+
+await build({
+  ...shared,
   entryPoints: ['service/main.ts'],
   outfile: 'service/main.js',
   format: 'cjs',
@@ -43,4 +52,4 @@ await build({
   target: 'node22',
 });
 
-console.log('build ok: panel/main.js, background/main.js, page/main.js, service/main.js');
+console.log('build ok: panel/main.js, background/main.js, page/main.js, status/main.js, service/main.js');

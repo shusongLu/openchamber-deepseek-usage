@@ -1,0 +1,86 @@
+/* Work Status 区块：贴宿主状态卡的一行行读数，尽量紧凑（帧高度 24–320px）。 */
+:root {
+  color-scheme: light dark;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+}
+
+body {
+  font:
+    12px/1.45 system-ui,
+    -apple-system,
+    "Segoe UI",
+    "Microsoft YaHei",
+    sans-serif;
+  padding: 6px 2px 8px;
+  color: inherit;
+}
+
+.wrap {
+  display: flex;
+  flex-direction: column;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 8px;
+  padding: 4px 0;
+}
+
+.row + .row {
+  border-top: 1px solid color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.row .k {
+  font-size: 11px;
+  opacity: 0.62;
+  white-space: nowrap;
+}
+
+.row .v {
+  text-align: right;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row .s {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  opacity: 0.58;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.val-low {
+  color: var(--warning-text, currentColor);
+}
+
+.phase {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 5px;
+  font-size: 11px;
+  opacity: 0.62;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.phase .phase-text {
+  margin-left: auto;
+}
+
+.banner-slot {
+  display: contents;
+}

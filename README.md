@@ -1,6 +1,6 @@
 # openchamber-deepseek-usage
 
-OpenChamber 扩展：右侧栏面板显示 DeepSeek 余额、用量和峰谷计费状态。
+OpenChamber 扩展：右侧栏面板显示 DeepSeek 余额、用量和峰谷计费状态，聊天右侧的 Work Status 卡里也有一节常驻读数。
 
 ## 界面
 
@@ -8,7 +8,13 @@ OpenChamber 扩展：右侧栏面板显示 DeepSeek 余额、用量和峰谷计�
 | --- | --- |
 | ![深色](docs/panel-dark.jpg) | ![浅色](docs/panel-light.jpg) |
 
-> 截图为 mock 预览数据（`?mock=1`），实际显示本机真实数据。
+Work Status 区块（聊天右侧状态卡里的一节）：
+
+| 深色 | 浅色 |
+| --- | --- |
+| ![区块深色](docs/status-dark.jpg) | ![区块浅色](docs/status-light.jpg) |
+
+> 截图为 mock 预览数据（`?mock=1`），实际显示本机真实数据。区块截图里的「刷新」按钮在真实宿主里由 OpenChamber 画在区块标题栏右上角（`setStatusControls`）。
 
 ## 功能
 
@@ -22,6 +28,8 @@ OpenChamber 扩展：右侧栏面板显示 DeepSeek 余额、用量和峰谷计�
   - 官方价估算（按每条消息的实际峰谷时段重算）与 OpenCode 记账值对比
   - 按日柱状、按模型明细（flash / v4-pro / 历史模型名）
 - **消息菜单**：任意 DeepSeek 助手回复的 `...` 菜单里有「**本条 DeepSeek 费用**」——按该消息发生时刻的峰谷价算官方费用，弹 toast（带复制按钮），不打开面板
+- **Work Status 区块**：聊天右侧状态卡里常驻一节 —— 本会话（主/子代理拆分）、今日费用、余额三行读数 + 峰谷徽标与切换倒计时，标题栏带刷新按钮，项目/会话切换自动重算
+  - 需要 OpenChamber **2.0.1+**（`contributes.statusSection`）；旧版本扩展照常安装，只是不显示这一节
 - **全屏看板**：会话列表上方「Extension pages」→ **DeepSeek Usage**——近 12 周日历热力图 + 会话烧钱排行（点击直接跳到该会话）
 - **中英双语**：跟随 OpenChamber 界面语言（zh-* → 中文，其余 → English）
 - 面板 60 秒自动刷新，可手动刷新
@@ -44,9 +52,10 @@ OpenChamber 扩展：右侧栏面板显示 DeepSeek 余额、用量和峰谷计�
 
 ```bash
 npm install
-npm run build        # 生成 panel/main.js、background/main.js 与 service/main.js
+npm run build        # 生成 panel/main.js、background/main.js、page/main.js、status/main.js 与 service/main.js
 node tools/preview.mjs
 # 浏览器打开 http://127.0.0.1:5311/panel/index.html?mock=1&theme=dark
+# 区块预览：http://127.0.0.1:5311/status/index.html?mock=1&lang=zh
 ```
 
 Folder 安装直接运行本目录：改代码 → `npm run build` → 在面板里重新加载扩展即可。
@@ -64,12 +73,13 @@ Folder 安装直接运行本目录：改代码 → `npm run build` → 在面板
 
 ## English
 
-An OpenChamber extension: a rail panel, a message-menu action and a full-screen dashboard for your DeepSeek balance, usage and peak/off-peak billing (CNY).
+An OpenChamber extension: a rail panel, a chat Work Status section, a message-menu action and a full-screen dashboard for your DeepSeek balance, usage and peak/off-peak billing (CNY).
 
 - **Balance** from the official `GET /user/balance` endpoint; the local service finds your API key automatically (`DEEPSEEK_API_KEY`, then `~/.config/opencode/secrets/deepseek-api-key`, then `opencode.db` → `credential` table where OpenCode 2.x keeps credentials, then the legacy `~/.local/share/opencode/auth.json`)
 - **Peak / off-peak**: current phase, countdown and the official price table. Peak hours are Mon–Fri 01:00–04:00 & 06:00–10:00 UTC (Beijing 09:00–12:00, 14:00–18:00); off-peak is half price
 - **Usage** aggregated read-only from the local `opencode.db`: current session (incl. subagents, start time and duration), today / 7 days / 30 days, daily bars, per-model breakdown, official CNY cost recomputed per message versus OpenCode's own USD record (converted at the live rate)
 - **Message action**: “本条 DeepSeek 费用 / Message cost” inside any assistant message's `…` menu — a background action that shows a persistent, copyable toast without opening a panel
+- **Work Status section**: a compact block in the chat's right-hand status card — current session (main subagents split), today's cost and balance, plus the peak/off-peak badge and switch countdown, with a refresh button in its header. Requires OpenChamber 2.0.1+ (`contributes.statusSection`); older versions still install the extension and simply show no section
 - **Dashboard**: “Extension pages” → DeepSeek Usage — a 12-week calendar heatmap and a session ranking (click a row to open that session)
 - **Bilingual UI**: follows the host locale (zh-* → Chinese, otherwise English)
 

@@ -4,14 +4,184 @@
   var OPENCHAMBER_SDK_CHANNEL = "openchamber.sdk";
   var OPENCHAMBER_SDK_API_VERSION = 1;
 
+  // node_modules/@openchamber/sdk/dist/scrollbar-style.js
+  var GUEST_SCROLLING_ATTRIBUTE = "data-oc-scrolling";
+  var GUEST_SCROLLBAR_CSS = `
+:root {
+  --oc-scrollbar-thumb: color-mix(in srgb, var(--oc-muted, currentColor) 40%, transparent);
+  --oc-scrollbar-thumb-hover: color-mix(in srgb, var(--oc-muted, currentColor) 65%, transparent);
+  scrollbar-gutter: stable;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+:hover, [${GUEST_SCROLLING_ATTRIBUTE}] {
+  scrollbar-color: var(--oc-scrollbar-thumb) transparent;
+}
+/* Chromium's standard scrollbar properties otherwise override its pseudo-elements. */
+@supports selector(::-webkit-scrollbar) {
+  *, :hover, [${GUEST_SCROLLING_ATTRIBUTE}] { scrollbar-width: auto; scrollbar-color: auto; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; background: transparent; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: 999px;
+    min-width: 24px;
+    min-height: 24px;
+  }
+  :hover::-webkit-scrollbar-thumb, [${GUEST_SCROLLING_ATTRIBUTE}]::-webkit-scrollbar-thumb { background: var(--oc-scrollbar-thumb); }
+  ::-webkit-scrollbar-thumb:hover { background: var(--oc-scrollbar-thumb-hover); }
+  ::-webkit-scrollbar-corner { background: transparent; }
+  ::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+}
+@media (forced-colors: active) {
+  *, :hover, [${GUEST_SCROLLING_ATTRIBUTE}] { scrollbar-color: auto; }
+  ::-webkit-scrollbar-thumb, ::-webkit-scrollbar-thumb:hover { background: CanvasText; }
+}
+`;
+  function installGuestScrollbarActivity(doc) {
+    const root2 = doc.documentElement;
+    if (root2.hasAttribute("data-oc-scrollbar-activity"))
+      return;
+    root2.setAttribute("data-oc-scrollbar-activity", "");
+    const timers = /* @__PURE__ */ new WeakMap();
+    doc.addEventListener("scroll", (event) => {
+      const target = event.target === doc ? root2 : event.target;
+      if (!(target instanceof Element))
+        return;
+      if (!target.hasAttribute("data-oc-scrolling"))
+        target.setAttribute("data-oc-scrolling", "");
+      const pending = timers.get(target);
+      if (pending !== void 0)
+        clearTimeout(pending);
+      timers.set(target, setTimeout(() => {
+        timers.delete(target);
+        target.removeAttribute("data-oc-scrolling");
+      }, 1e3));
+    }, { capture: true, passive: true });
+  }
+  var GUEST_SCROLLBAR_SCRIPT = `(${installGuestScrollbarActivity.toString()})(document);`;
+
   // node_modules/@openchamber/sdk/dist/workspace.js
   var GUEST_STORAGE_KEY_MAX = 128;
   var GUEST_STORAGE_VALUE_BYTES = 65536;
+
+  // node_modules/@openchamber/sdk/dist/shells.js
+  var GUEST_SHELL_ID_MAX = 128;
+  var GUEST_SHELL_OUTPUT_TAIL_MAX = 65536;
+
+  // node_modules/@openchamber/sdk/dist/status-controls.js
+  var GUEST_STATUS_CONTROLS_MAX = 4;
+  var GUEST_STATUS_CONTROL_ID = /^[a-z][a-z0-9-]{0,39}$/;
+  var GUEST_STATUS_CONTROL_LABEL_MAX = 60;
+  var GUEST_STATUS_CONTROL_OPTIONS_MAX = 16;
+  var GUEST_STATUS_CONTROL_VALUE_MAX = 80;
+  var isControlObject = (value) => Object(value) === value && !Array.isArray(value);
+  var hasOnlyKeys = (value, keys) => Object.keys(value).every((key) => keys.includes(key));
+  var isLabel = (value) => String(value) === value && value.length >= 1 && value.length <= GUEST_STATUS_CONTROL_LABEL_MAX;
+  var isValue = (value) => String(value) === value && value.length >= 1 && value.length <= GUEST_STATUS_CONTROL_VALUE_MAX;
+  var isGuestStatusControls = (controls) => {
+    if (!Array.isArray(controls) || controls.length > GUEST_STATUS_CONTROLS_MAX)
+      return false;
+    const ids = /* @__PURE__ */ new Set();
+    for (const control of controls) {
+      if (!isControlObject(control) || !GUEST_STATUS_CONTROL_ID.test(control.id) || !isLabel(control.label))
+        return false;
+      if (control.disabled !== void 0 && control.disabled !== true && control.disabled !== false)
+        return false;
+      if (ids.has(control.id))
+        return false;
+      ids.add(control.id);
+      if (control.kind === "button") {
+        if (!hasOnlyKeys(control, ["kind", "id", "label", "disabled"]))
+          return false;
+        continue;
+      }
+      if (control.kind !== "select" || !hasOnlyKeys(control, ["kind", "id", "label", "value", "options", "disabled"]))
+        return false;
+      if (!isValue(control.value) || !Array.isArray(control.options) || control.options.length < 1 || control.options.length > GUEST_STATUS_CONTROL_OPTIONS_MAX)
+        return false;
+      const values = /* @__PURE__ */ new Set();
+      for (const option of control.options) {
+        if (!isControlObject(option) || !hasOnlyKeys(option, ["value", "label"]) || !isValue(option.value) || !isLabel(option.label) || values.has(option.value))
+          return false;
+        values.add(option.value);
+      }
+      if (!values.has(control.value))
+        return false;
+    }
+    return true;
+  };
+
+  // node_modules/@openchamber/sdk/dist/file-editor.js
+  var GUEST_FILE_EDITOR_CONTENT_MAX = 2e7;
+  var GUEST_FILE_EDITOR_VERSION_MAX = 256;
+  var fileEditorPayloadSize = (value) => "bytes" in value ? value.bytes.byteLength : value.content.length;
+  var sameFileEditorDocument = (left, right) => {
+    if (left.path !== right.path || left.readOnly !== right.readOnly)
+      return false;
+    if (left.encoding === "text" || right.encoding === "text") {
+      return left.encoding === "text" && right.encoding === "text" && left.content === right.content;
+    }
+    if (left.bytes.byteLength !== right.bytes.byteLength)
+      return false;
+    for (let index = 0; index < left.bytes.byteLength; index += 1) {
+      if (left.bytes[index] !== right.bytes[index])
+        return false;
+    }
+    return true;
+  };
+
+  // node_modules/@openchamber/sdk/dist/popover.js
+  var GUEST_POPOVER_ID = /^[A-Za-z0-9_-]{1,80}$/;
+  var GUEST_POPOVER_COORDINATE_MAX = 1e5;
+  var GUEST_POPOVER_WIDTH_MIN = 160;
+  var GUEST_POPOVER_WIDTH_MAX = 640;
+  var GUEST_POPOVER_HEIGHT_MIN = 48;
+  var GUEST_POPOVER_HEIGHT_MAX = 480;
+  var GUEST_POPOVER_DATA_MAX = 16e3;
+  var GUEST_POPOVER_DATA_DEPTH_MAX = 32;
+  var GUEST_POPOVER_SIDES = ["left", "right", "top", "bottom"];
+  var hasBoundedJsonTree = (value, depth = 0, budget = { remaining: GUEST_POPOVER_DATA_MAX }) => {
+    if (--budget.remaining < 0 || depth >= GUEST_POPOVER_DATA_DEPTH_MAX)
+      return false;
+    if (value === null)
+      return true;
+    const children = Array.isArray(value) ? value : Object(value) === value ? Object.values(value) : [];
+    for (const item of children) {
+      if (!hasBoundedJsonTree(item, depth + 1, budget))
+        return false;
+    }
+    return true;
+  };
+  var isFiniteJson = (value) => {
+    if (value === null || value === true || value === false)
+      return true;
+    if (Array.isArray(value))
+      return Object.keys(value).every((key) => /^(0|[1-9]\d*)$/.test(key) && Number(key) < value.length) && value.every(isFiniteJson);
+    if (Object(value) === value) {
+      const prototype = Object.getPrototypeOf(value);
+      return (prototype === null || prototype === Object.prototype) && Object.values(value).every(isFiniteJson);
+    }
+    return String(value) === value || Number.isFinite(value);
+  };
+  var isGuestPopoverRequest = (request) => {
+    try {
+      if (String(request.id) !== request.id || !GUEST_POPOVER_ID.test(request.id) || !Number.isFinite(request.anchor.x) || Math.abs(request.anchor.x) > GUEST_POPOVER_COORDINATE_MAX || !Number.isFinite(request.anchor.y) || Math.abs(request.anchor.y) > GUEST_POPOVER_COORDINATE_MAX || !Number.isFinite(request.anchor.width) || !Number.isFinite(request.anchor.height) || request.anchor.width <= 0 || request.anchor.height <= 0 || request.anchor.width > GUEST_POPOVER_COORDINATE_MAX || request.anchor.height > GUEST_POPOVER_COORDINATE_MAX || !Number.isInteger(request.width) || request.width < GUEST_POPOVER_WIDTH_MIN || request.width > GUEST_POPOVER_WIDTH_MAX || !Number.isInteger(request.height) || request.height < GUEST_POPOVER_HEIGHT_MIN || request.height > GUEST_POPOVER_HEIGHT_MAX || request.side !== void 0 && !GUEST_POPOVER_SIDES.includes(request.side) || request.focus !== void 0 && request.focus !== true && request.focus !== false || !hasBoundedJsonTree(request.data) || !isFiniteJson(request.data))
+        return false;
+      return JSON.stringify(request.data).length <= GUEST_POPOVER_DATA_MAX;
+    } catch {
+      return false;
+    }
+  };
 
   // node_modules/@openchamber/sdk/dist/contract.js
   var GUEST_FILE_STAT_KINDS = ["file", "directory", "other", "missing"];
   var isStartSessionResult = (value) => Boolean(value && "sessionId" in value);
   var isPromptResult = (value) => Boolean(value && "sent" in value && !("sessionId" in value));
+  var GUEST_COMMIT_SHA = /^[0-9a-f]{7,64}$/i;
+  var isGuestCommitSha = (value) => GUEST_COMMIT_SHA.test(value);
   var GUEST_TOAST_MAX = 500;
   var GUEST_CLIPBOARD_TEXT_MAX = 32e3;
   var GUEST_COMPOSE_TEXT_MAX = 16e3;
@@ -31,6 +201,7 @@
   var GUEST_GENERATE_OUTPUT_TOKENS_MAX = 4e3;
   var GUEST_GENERATE_TIMEOUT_MS = 9e4;
   var GUEST_BADGE_MAX = 999;
+  var GUEST_FRAME_HEIGHT_MAX = 1e4;
   var GUEST_RESOLVE_ERROR_MAX = 500;
   var HOST_REQUEST_ERROR_CODES = [
     "HOST_UNAVAILABLE",
@@ -50,7 +221,8 @@
     "FILE_TOO_LARGE",
     "DENIED",
     "NO_MODEL",
-    "MODEL_FAILED"
+    "MODEL_FAILED",
+    "UNSUPPORTED"
   ];
   var SERVICE_STATUS_VALUES = ["stopped", "starting", "ready", "failed"];
   var hostRequestErrorCodeSet = new Set(HOST_REQUEST_ERROR_CODES);
@@ -130,6 +302,11 @@
       return null;
     return Math.min(GUEST_BADGE_MAX, Math.max(0, Math.round(count)));
   };
+  var clampFrameHeight = (height) => {
+    if (!Number.isFinite(height))
+      return 0;
+    return Math.min(GUEST_FRAME_HEIGHT_MAX, Math.max(0, Math.ceil(height)));
+  };
   var isGuestFilePath = (value) => value.length > 0 && value.length <= GUEST_FILE_PATH_MAX && !value.includes("\0") && !value.includes("\\");
   var isGuestRequestPath = (value) => {
     if (!value.startsWith("/") || value.includes("\0") || value.includes("\\") || value.includes("://")) {
@@ -152,6 +329,7 @@
   var isGenerateResult = (value) => Boolean(value && "text" in value && String(value.text) === value.text && !("status" in value));
   var HOST_PUSH_TYPES = /* @__PURE__ */ new Set([
     "workspace",
+    "shells",
     "ready",
     "directory",
     "session",
@@ -160,7 +338,12 @@
     "session-lifecycle",
     "item",
     "resolve",
-    "action"
+    "action",
+    "status-control-event",
+    "popover-closed",
+    "file-open",
+    "file-snapshot",
+    "file-saved"
   ]);
   var asWireRecord = (data) => Object(data) === data ? data : null;
   var isNonEmptyString = (value) => String(value) === value && value.length > 0;
@@ -205,6 +388,8 @@
   };
 
   // node_modules/@openchamber/sdk/dist/host.js
+  var isKeyEvent = (event) => "key" in event && "metaKey" in event && "ctrlKey" in event;
+  var isSaveShortcut = (event) => (event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "s";
   var HostRequestError = class extends Error {
     code;
     constructor(code, message) {
@@ -215,6 +400,14 @@
   };
   var rejectBadPath = () => Promise.reject(new HostRequestError("BAD_PATH", 'Request path must start with "/" and stay on the declared origin.'));
   var rejectBadFilePath = () => Promise.reject(new HostRequestError("BAD_PATH", `File path must be 1 to ${GUEST_FILE_PATH_MAX} characters without NUL or backslash.`));
+  var deviceStorageScope = (options) => {
+    if (options === void 0)
+      return void 0;
+    if (Object(options) !== options || Array.isArray(options) || options.scope !== void 0 && options.scope !== "instance" && options.scope !== "device") {
+      throw new HostRequestError("HOST_REJECTED", 'Storage scope must be "instance" or "device".');
+    }
+    return options.scope === "device" ? "device" : void 0;
+  };
   var nextId = (n) => {
     n.value += 1;
     return `oc-${n.value}`;
@@ -233,14 +426,25 @@
     const connectionListeners = /* @__PURE__ */ new Set();
     const settingsListeners = /* @__PURE__ */ new Set();
     const itemListeners = /* @__PURE__ */ new Set();
+    const statusControlListeners = /* @__PURE__ */ new Set();
+    const popoverClosedListeners = /* @__PURE__ */ new Set();
     let resolveHandler = null;
     let actionHandler = null;
+    const fileOpenListeners = /* @__PURE__ */ new Set();
+    const fileSavedListeners = /* @__PURE__ */ new Set();
+    let fileSnapshotHandler = null;
+    let lastFile = null;
+    let saveShortcutInstalled = false;
     const pending = /* @__PURE__ */ new Map();
     const workspaceListeners = /* @__PURE__ */ new Map();
+    const shellsListeners = /* @__PURE__ */ new Map();
     let disposed = false;
     const ids = { value: 0 };
     let lastReady = null;
     let lastLifecycle = null;
+    let popoverPointerActive = false;
+    let popoverFocusActive = false;
+    let popoverActivityReported = null;
     const lifecycleFromSession = (session) => {
       if (!session)
         return null;
@@ -271,6 +475,12 @@
         return;
       if (message.type === "workspace") {
         const listener = workspaceListeners.get(message.payload.subscriptionId);
+        if (listener)
+          emit([listener], message.payload.snapshot);
+        return;
+      }
+      if (message.type === "shells") {
+        const listener = shellsListeners.get(message.payload.subscriptionId);
         if (listener)
           emit([listener], message.payload.snapshot);
         return;
@@ -334,6 +544,14 @@
         emit(itemListeners, message.payload.item);
         return;
       }
+      if (message.type === "status-control-event") {
+        emit(statusControlListeners, message.payload);
+        return;
+      }
+      if (message.type === "popover-closed") {
+        emit(popoverClosedListeners, message.payload);
+        return;
+      }
       if (message.type === "action") {
         const answer = (payload) => {
           if (!disposed)
@@ -354,6 +572,48 @@
           const text = (error instanceof Error ? error.message : String(error)).trim();
           answer({ ok: false, error: (text || "Action failed.").slice(0, GUEST_RESOLVE_ERROR_MAX) });
         });
+        return;
+      }
+      if (message.type === "file-open") {
+        const next = message.payload;
+        if (lastFile && sameFileEditorDocument(lastFile, next))
+          return;
+        lastFile = next;
+        emit(fileOpenListeners, message.payload);
+        return;
+      }
+      if (message.type === "file-saved") {
+        emit(fileSavedListeners, message.payload.version);
+        return;
+      }
+      if (message.type === "file-snapshot") {
+        const answer = (payload) => {
+          if (!disposed)
+            post({
+              channel: OPENCHAMBER_SDK_CHANNEL,
+              v: OPENCHAMBER_SDK_API_VERSION,
+              type: "file-snapshot-result",
+              id: message.id,
+              payload
+            });
+        };
+        const fail = (text) => answer({ error: (text.trim() || "Could not read the edited file.").slice(0, GUEST_RESOLVE_ERROR_MAX) });
+        const handler = fileSnapshotHandler;
+        if (!handler) {
+          fail("This extension does not edit files.");
+          return;
+        }
+        Promise.resolve().then(() => handler(message.payload.purpose)).then((snapshot) => {
+          if (fileEditorPayloadSize(snapshot) > GUEST_FILE_EDITOR_CONTENT_MAX) {
+            fail(`The file is over ${GUEST_FILE_EDITOR_CONTENT_MAX} ${"bytes" in snapshot ? "bytes" : "characters"}.`);
+            return;
+          }
+          if (snapshot.version.length > GUEST_FILE_EDITOR_VERSION_MAX) {
+            fail(`The snapshot version is over ${GUEST_FILE_EDITOR_VERSION_MAX} characters.`);
+            return;
+          }
+          answer({ snapshot: "bytes" in snapshot ? { bytes: snapshot.bytes, version: snapshot.version } : { content: snapshot.content, version: snapshot.version } });
+        }, (error) => fail(error instanceof Error ? error.message : String(error)));
         return;
       }
       if (message.type === "resolve") {
@@ -409,6 +669,57 @@
     };
     const request = (message) => send(message).then(() => void 0);
     const envelope = { channel: OPENCHAMBER_SDK_CHANNEL, v: OPENCHAMBER_SDK_API_VERSION };
+    const notify = (message) => {
+      if (!disposed && target.parent !== target)
+        post(message);
+    };
+    const requestFileSave = () => notify({ ...envelope, type: "file-save" });
+    const onSaveShortcut = (event) => {
+      if (!isKeyEvent(event) || !isSaveShortcut(event))
+        return;
+      event.preventDefault();
+      requestFileSave();
+    };
+    const onPopoverEscape = (event) => {
+      if (!isKeyEvent(event) || event.key !== "Escape" || lastReady?.surface !== "popover" || !lastReady.popover)
+        return;
+      event.preventDefault();
+      void closePopover(lastReady.popover.id, "escape").catch(() => void 0);
+    };
+    const reportPopoverActivity = () => {
+      const popover = lastReady?.surface === "popover" ? lastReady.popover : void 0;
+      if (!popover)
+        return;
+      const active = popoverPointerActive || popoverFocusActive;
+      if (popoverActivityReported === active)
+        return;
+      popoverActivityReported = active;
+      void setPopoverAnchorActive(popover.id, active).catch(() => void 0);
+    };
+    const onPopoverPointerOver = () => {
+      if (lastReady?.surface !== "popover" || popoverPointerActive)
+        return;
+      popoverPointerActive = true;
+      reportPopoverActivity();
+    };
+    const onPopoverPointerOut = (event) => {
+      if (lastReady?.surface !== "popover" || event.relatedTarget !== null || !popoverPointerActive)
+        return;
+      popoverPointerActive = false;
+      reportPopoverActivity();
+    };
+    const onPopoverFocus = () => {
+      if (lastReady?.surface !== "popover" || popoverFocusActive)
+        return;
+      popoverFocusActive = true;
+      reportPopoverActivity();
+    };
+    const onPopoverBlur = () => {
+      if (lastReady?.surface !== "popover" || !popoverFocusActive)
+        return;
+      popoverFocusActive = false;
+      reportPopoverActivity();
+    };
     const requireIdentity = (value, maximum = 1024) => {
       if (!value.trim() || value.length > maximum)
         throw new HostRequestError("HOST_REJECTED", `Identity must contain 1 to ${maximum} characters.`);
@@ -441,6 +752,27 @@
         post({ ...envelope, type: "workspace-unsubscribe", id: nextId(ids), payload: { subscriptionId } });
       };
     };
+    const subscribeShells = async (scope, listener) => {
+      if (scope.kind === "session")
+        requireIdentity(scope.sessionId);
+      if (scope.kind === "project")
+        requireIdentity(scope.projectId);
+      const subscriptionId = nextId(ids);
+      shellsListeners.set(subscriptionId, listener);
+      try {
+        await request({ ...envelope, type: "shells-subscribe", id: nextId(ids), payload: { subscriptionId, scope } });
+      } catch (error) {
+        shellsListeners.delete(subscriptionId);
+        if (!disposed)
+          post({ ...envelope, type: "shells-unsubscribe", id: nextId(ids), payload: { subscriptionId } });
+        throw error;
+      }
+      return () => {
+        if (!shellsListeners.delete(subscriptionId) || disposed)
+          return;
+        post({ ...envelope, type: "shells-unsubscribe", id: nextId(ids), payload: { subscriptionId } });
+      };
+    };
     const storage = async (payload) => {
       if ("key" in payload && (payload.key.length === 0 || payload.key.length > GUEST_STORAGE_KEY_MAX)) {
         throw new HostRequestError("HOST_REJECTED", "Storage key must contain 1 to 128 characters.");
@@ -451,11 +783,22 @@
       if (payload.op === "set" && new TextEncoder().encode(JSON.stringify(payload.value)).length > GUEST_STORAGE_VALUE_BYTES) {
         throw new HostRequestError("HOST_REJECTED", "Storage value exceeds 64 KiB.");
       }
+      if (payload.scope === "device" && lastReady?.features?.deviceStorage !== true) {
+        throw new HostRequestError("UNSUPPORTED", "This host does not support device storage.");
+      }
       const result = await send({ ...envelope, type: "storage", id: nextId(ids), payload });
       if (!result || !("storage" in result) || result.op !== payload.op)
         throw new HostRequestError("HOST_REJECTED", "Host did not return storage data.");
       return result;
     };
+    const closePopover = (id, reason) => lastReady?.features?.popovers !== true && !(lastReady?.surface === "popover" && lastReady.popover?.id === id) ? Promise.reject(new HostRequestError("UNSUPPORTED", "This host does not support popovers.")) : request({ ...envelope, type: "popover-close", id: nextId(ids), payload: reason ? { id, reason } : { id } });
+    const setPopoverAnchorActive = (id, active) => lastReady?.features?.popovers !== true && !(lastReady?.surface === "popover" && lastReady.popover?.id === id) ? Promise.reject(new HostRequestError("UNSUPPORTED", "This host does not support popovers.")) : request({ ...envelope, type: "popover-anchor", id: nextId(ids), payload: { id, active } });
+    target.addEventListener("keydown", onPopoverEscape, true);
+    target.addEventListener("pointerover", onPopoverPointerOver);
+    target.addEventListener("pointermove", onPopoverPointerOver);
+    target.addEventListener("pointerout", onPopoverPointerOut);
+    target.addEventListener("focus", onPopoverFocus);
+    target.addEventListener("blur", onPopoverBlur);
     return {
       onAction: (handler) => {
         actionHandler = handler;
@@ -494,23 +837,64 @@
         if (snapshot.kind === "sessions")
           listener(snapshot);
       }),
+      onRunningShells: (scope, listener) => subscribeShells(scope, listener),
+      readShellOutput: async (shellId, options2) => {
+        requireIdentity(shellId, GUEST_SHELL_ID_MAX);
+        const cursor = options2?.cursor;
+        if (cursor !== void 0 && (!Number.isInteger(cursor) || cursor < 0)) {
+          throw new HostRequestError("HOST_REJECTED", "Shell output cursor must be a non-negative integer.");
+        }
+        const tailBytes = options2?.tailBytes;
+        if (tailBytes !== void 0 && (!Number.isInteger(tailBytes) || tailBytes < 1 || tailBytes > GUEST_SHELL_OUTPUT_TAIL_MAX)) {
+          throw new HostRequestError("HOST_REJECTED", `Shell output tailBytes must be an integer between 1 and ${GUEST_SHELL_OUTPUT_TAIL_MAX}.`);
+        }
+        const result = await send({ ...envelope, type: "shell-output", id: nextId(ids), payload: { shellId, cursor, tailBytes } });
+        const output = result;
+        if (!output || typeof output.output !== "string" || !Number.isFinite(output.cursor)) {
+          throw new HostRequestError("HOST_REJECTED", "Host did not return shell output.");
+        }
+        return output;
+      },
+      stopShell: async (shellId) => {
+        requireIdentity(shellId, GUEST_SHELL_ID_MAX);
+        const result = await send({ ...envelope, type: "shell-stop", id: nextId(ids), payload: { shellId } });
+        if (result?.stopped !== true)
+          throw new HostRequestError("HOST_REJECTED", "Host did not stop the shell.");
+        return { stopped: true };
+      },
       openSession: async (sessionId) => {
         requireIdentity(sessionId);
         await request({ ...envelope, type: "open-session", id: nextId(ids), payload: { sessionId } });
       },
       storage: {
-        get: async (key) => {
-          const result = await storage({ op: "get", key });
+        get: async (key, options2) => {
+          const scope = deviceStorageScope(options2);
+          const payload = { op: "get", key };
+          if (scope)
+            payload.scope = scope;
+          const result = await storage(payload);
           return result.op === "get" && result.found ? result.value : void 0;
         },
-        set: async (key, value) => {
-          await storage({ op: "set", key, value });
+        set: async (key, value, options2) => {
+          const scope = deviceStorageScope(options2);
+          const payload = { op: "set", key, value };
+          if (scope)
+            payload.scope = scope;
+          await storage(payload);
         },
-        delete: async (key) => {
-          await storage({ op: "delete", key });
+        delete: async (key, options2) => {
+          const scope = deviceStorageScope(options2);
+          const payload = { op: "delete", key };
+          if (scope)
+            payload.scope = scope;
+          await storage(payload);
         },
-        keys: async () => {
-          const result = await storage({ op: "keys" });
+        keys: async (options2) => {
+          const scope = deviceStorageScope(options2);
+          const payload = { op: "keys" };
+          if (scope)
+            payload.scope = scope;
+          const result = await storage(payload);
           if (result.op !== "keys")
             throw new HostRequestError("HOST_REJECTED", "Expected storage keys.");
           return result.keys;
@@ -572,6 +956,38 @@
           itemListeners.delete(listener);
         };
       },
+      onStatusControl: (listener) => {
+        statusControlListeners.add(listener);
+        return () => {
+          statusControlListeners.delete(listener);
+        };
+      },
+      onPopoverClosed: (listener) => {
+        popoverClosedListeners.add(listener);
+        return () => {
+          popoverClosedListeners.delete(listener);
+        };
+      },
+      setStatusControls: (controls) => {
+        if (lastReady?.features?.statusControls !== true) {
+          return Promise.reject(new HostRequestError("UNSUPPORTED", "This host does not support status controls."));
+        }
+        if (!isGuestStatusControls(controls)) {
+          return Promise.reject(new HostRequestError("HOST_REJECTED", "Status controls must have unique bounded ids and valid selected options."));
+        }
+        return request({ ...envelope, type: "status-controls", id: nextId(ids), payload: { controls } });
+      },
+      openPopover: (payload) => {
+        if (lastReady?.features?.popovers !== true) {
+          return Promise.reject(new HostRequestError("UNSUPPORTED", "This host does not support popovers."));
+        }
+        if (!isGuestPopoverRequest(payload)) {
+          return Promise.reject(new HostRequestError("HOST_REJECTED", "Popover requests need bounded geometry and JSON data."));
+        }
+        return request({ ...envelope, type: "popover-open", id: nextId(ids), payload });
+      },
+      closePopover,
+      setPopoverAnchorActive,
       onResolve: (handler) => {
         resolveHandler = handler;
         return () => {
@@ -602,6 +1018,13 @@
         id: nextId(ids),
         payload: { url }
       }),
+      openCommit: (sha) => isGuestCommitSha(sha) ? request({
+        channel: OPENCHAMBER_SDK_CHANNEL,
+        v: OPENCHAMBER_SDK_API_VERSION,
+        type: "open-commit",
+        id: nextId(ids),
+        payload: { sha }
+      }) : Promise.reject(new HostRequestError("HOST_REJECTED", "Commit id must be 7 to 64 hex characters.")),
       openSurface: (surfaceId) => request({
         channel: OPENCHAMBER_SDK_CHANNEL,
         v: OPENCHAMBER_SDK_API_VERSION,
@@ -822,15 +1245,65 @@
         id: nextId(ids),
         payload: { count: clampBadgeCount(count) }
       }),
+      setHeight: (height) => request({
+        channel: OPENCHAMBER_SDK_CHANNEL,
+        v: OPENCHAMBER_SDK_API_VERSION,
+        type: "resize",
+        id: nextId(ids),
+        payload: { height: clampFrameHeight(height) }
+      }),
+      onFileOpen: (listener) => {
+        fileOpenListeners.add(listener);
+        if (!saveShortcutInstalled) {
+          saveShortcutInstalled = true;
+          target.addEventListener("keydown", onSaveShortcut, true);
+        }
+        if (lastFile)
+          listener(lastFile);
+        return () => {
+          fileOpenListeners.delete(listener);
+        };
+      },
+      onFileSnapshot: (handler) => {
+        fileSnapshotHandler = handler;
+        return () => {
+          if (fileSnapshotHandler === handler)
+            fileSnapshotHandler = null;
+        };
+      },
+      onFileSaved: (listener) => {
+        fileSavedListeners.add(listener);
+        return () => {
+          fileSavedListeners.delete(listener);
+        };
+      },
+      reportFileChange: (change) => notify({ ...envelope, type: "file-change", payload: { dirty: change.dirty, edited: change.edited } }),
+      requestFileSave,
+      reportFileUnsupported: () => notify({ ...envelope, type: "file-unsupported" }),
       dispose: () => {
         for (const subscriptionId of workspaceListeners.keys()) {
           post({ ...envelope, type: "workspace-unsubscribe", id: nextId(ids), payload: { subscriptionId } });
         }
         workspaceListeners.clear();
+        for (const subscriptionId of shellsListeners.keys()) {
+          post({ ...envelope, type: "shells-unsubscribe", id: nextId(ids), payload: { subscriptionId } });
+        }
+        shellsListeners.clear();
         disposed = true;
         resolveHandler = null;
         actionHandler = null;
+        fileSnapshotHandler = null;
+        fileOpenListeners.clear();
+        fileSavedListeners.clear();
+        if (saveShortcutInstalled)
+          target.removeEventListener("keydown", onSaveShortcut, true);
         target.removeEventListener("message", onMessage);
+        target.removeEventListener("keydown", onPopoverEscape, true);
+        target.removeEventListener("pointerover", onPopoverPointerOver);
+        target.removeEventListener("pointermove", onPopoverPointerOver);
+        target.removeEventListener("pointerout", onPopoverPointerOut);
+        target.removeEventListener("focus", onPopoverFocus);
+        target.removeEventListener("blur", onPopoverBlur);
         for (const waiter of pending.values()) {
           clearTimeout(waiter.timer);
           waiter.reject(new HostRequestError("HOST_UNAVAILABLE", "Host client was disposed."));
@@ -843,9 +1316,31 @@
         connectionListeners.clear();
         settingsListeners.clear();
         itemListeners.clear();
+        statusControlListeners.clear();
+        popoverClosedListeners.clear();
       }
     };
   };
+
+  // node_modules/@openchamber/sdk/dist/service-providers.js
+  var BROWSER_CONTROL_ACTIONS = [
+    "browser.open",
+    "browser.snapshot",
+    "browser.click",
+    "browser.type",
+    "browser.scroll",
+    "browser.back",
+    "browser.forward",
+    "browser.inspect",
+    "browser.capture",
+    "browser.resize"
+  ];
+  var BROWSER_PROVIDER_IDLE_MS = 10 * 6e4;
+  var CONTROL_ACTIONS = new Set(BROWSER_CONTROL_ACTIONS);
+
+  // node_modules/@openchamber/sdk/dist/service-surface.js
+  var SURFACE_CONTROLLERS = ["none", "agent", "user"];
+  var CONTROLLERS = new Set(SURFACE_CONTROLLERS);
 
   // page/main.ts
   var L = {

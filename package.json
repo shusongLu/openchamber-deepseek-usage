@@ -1,6 +1,6 @@
 {
   "name": "openchamber-deepseek-usage",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "private": true,
   "description": "DeepSeek 余额、用量与峰谷计费面板（OpenChamber 扩展）",
   "scripts": {
@@ -14,7 +14,7 @@
   },
   "openchamber": {
     "apiVersion": 1,
-    "engines": { "openchamber": ">=2.5.2" },
+    "engines": { "openchamber": ">=2.0.1" },
     "contributes": {
       "panel": {
         "id": "deepseek-usage",
@@ -31,8 +31,8 @@
       },
       "statusSection": {
         "title": "DeepSeek 用量 / Usage",
-        "source": { "path": "/status", "interval": 15000 },
-        "defaultExpanded": true
+        "entry": "status/index.html",
+        "height": 128
       },
       "capabilities": ["sessions"],
       "service": {

@@ -9,7 +9,7 @@ OpenChamber 扩展：右侧栏面板显示 DeepSeek 余额、用量和峰谷计�
 | ![深色](docs/panel-dark.jpg) | ![浅色](docs/panel-light.jpg) |
 
 > 截图为 mock 预览数据（`?mock=1`），实际显示本机真实数据。
-> 聊天右侧的 Work Status 区块由 OpenChamber 按 service 返回的数据绘制（source 模式），没有独立页面。
+> 聊天右侧的 Work Status 区块是扩展自己的一个内嵌页面（能拿到宿主传入的真实会话 id）。
 
 ## 功能
 
@@ -25,8 +25,8 @@ OpenChamber 扩展：右侧栏面板显示 DeepSeek 余额、用量和峰谷计�
 - **消息菜单**：任意 DeepSeek 助手回复的 `...` 菜单里有「**本条 DeepSeek 费用**」——按该消息发生时刻的峰谷价算官方费用，弹 toast（带复制按钮），不打开面板
 - **会话排行**：面板里按当前区间（今日 / 昨日 / 近 7 天 / 近 30 天）列出花费最高的 5 个会话，含次数与最近调用时间，点击直接跳到该会话
 - **今日 vs 昨日**：今日费用卡下方显示相对昨日的变化（金额 + 百分比）；区间切换新增「昨日」
-- **Work Status 区块**（source 模式）：聊天右侧状态卡里常驻一节，由 OpenChamber 直接绘制 —— 本会话（按 `time_viewed` 最近查看 + 消息活动推断，含子代理拆分）、今日费用、余额、峰谷徽标与切换倒计时，标题栏带刷新按钮
-  - 需要 OpenChamber **2.5.2+**（`contributes.statusSection.source`）
+- **Work Status 区块**：聊天右侧状态卡里常驻一节 —— 本会话（宿主传入真实 session，主/子代理拆分、开始时间与最近调用）、今日费用、余额 + 峰谷徽标与切换倒计时，标题栏带刷新按钮，切换会话立即重算
+  - 需要 OpenChamber **2.0.1+**（`contributes.statusSection`）
 - **全屏看板**：会话列表上方「Extension pages」→ **DeepSeek Usage**——近 12 周日历热力图 + 会话烧钱排行（点击直接跳到该会话）
 - **中英双语**：跟随 OpenChamber 界面语言（zh-* → 中文，其余 → English）
 - 面板 60 秒自动刷新，可手动刷新
@@ -43,7 +43,7 @@ OpenChamber 扩展：右侧栏面板显示 DeepSeek 余额、用量和峰谷计�
 
 > git 安装会把包复制到 OpenChamber 数据目录；folder 安装直接跑源码目录。
 > 发布新版本时记得提升 `package.json` 里的 `version`。
-> 需要 OpenChamber 2.5.2+（statusSection.source、background action 与看板页）。
+> 需要 OpenChamber 2.0.1+（statusSection、background action 与看板页）。
 
 ## 开发
 
@@ -83,7 +83,7 @@ An OpenChamber extension: a rail panel, a chat Work Status section, a message-me
 - **Message action**: “本条 DeepSeek 费用 / Message cost” inside any assistant message's `…` menu — a background action that shows a persistent, copyable toast without opening a panel
 - **Session ranking**: the panel lists the top 5 sessions by cost for the selected range (today / yesterday / last 7 / last 30 days), with calls and last activity; click a row to open that session
 - **Today vs yesterday**: the today card shows the change against yesterday (amount and percent); “Yesterday” is a range option too
-- **Work Status section** (source mode): the host draws it from the service's answers — latest session in the project folder (incl. subagents), today's cost, balance, the peak/off-peak phase and switch countdown, with a refresh button in the header. Requires OpenChamber 2.5.2+ (`contributes.statusSection.source`)
+- **Work Status section**: a compact block in the chat's right-hand status card, rendered by the extension with the real session id from the host — current session (incl. subagents), today's cost and balance, plus the peak/off-peak badge and switch countdown, with a refresh button in its header. Requires OpenChamber 2.0.1+ (`contributes.statusSection`)
 - **Dashboard**: “Extension pages” → DeepSeek Usage — a 12-week calendar heatmap and a session ranking (click a row to open that session)
 - **Bilingual UI**: follows the host locale (zh-* → Chinese, otherwise English)
 

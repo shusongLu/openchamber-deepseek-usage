@@ -23,6 +23,8 @@ OpenChamber 扩展：右侧栏面板显示 DeepSeek 余额、用量和峰谷计�
   - 官方价估算（按每条消息的实际峰谷时段重算）与 OpenCode 记账值对比
   - 按日柱状、按模型明细（flash / v4-pro / 历史模型名）
 - **消息菜单**：任意 DeepSeek 助手回复的 `...` 菜单里有「**本条 DeepSeek 费用**」——按该消息发生时刻的峰谷价算官方费用，弹 toast（带复制按钮），不打开面板
+- **会话排行**：面板里按当前区间（今日 / 昨日 / 近 7 天 / 近 30 天）列出花费最高的 5 个会话，含次数与最近调用时间，点击直接跳到该会话
+- **今日 vs 昨日**：今日费用卡下方显示相对昨日的变化（金额 + 百分比）；区间切换新增「昨日」
 - **Work Status 区块**（source 模式）：聊天右侧状态卡里常驻一节，由 OpenChamber 直接绘制 —— 本会话（按项目目录内最近活动推断，含子代理拆分）、今日费用、余额、峰谷徽标与切换倒计时，标题栏带刷新按钮
   - 需要 OpenChamber **2.5.2+**（`contributes.statusSection.source`）
 - **全屏看板**：会话列表上方「Extension pages」→ **DeepSeek Usage**——近 12 周日历热力图 + 会话烧钱排行（点击直接跳到该会话）
@@ -79,6 +81,8 @@ An OpenChamber extension: a rail panel, a chat Work Status section, a message-me
 - **Peak / off-peak**: current phase, countdown and the official price table. Peak hours are Mon–Fri 01:00–04:00 & 06:00–10:00 UTC (Beijing 09:00–12:00, 14:00–18:00); off-peak is half price
 - **Usage** aggregated read-only from the local `opencode.db`: current session (incl. subagents, start time and duration), today / 7 days / 30 days, daily bars, per-model breakdown, official CNY cost recomputed per message versus OpenCode's own USD record (converted at the live rate)
 - **Message action**: “本条 DeepSeek 费用 / Message cost” inside any assistant message's `…` menu — a background action that shows a persistent, copyable toast without opening a panel
+- **Session ranking**: the panel lists the top 5 sessions by cost for the selected range (today / yesterday / last 7 / last 30 days), with calls and last activity; click a row to open that session
+- **Today vs yesterday**: the today card shows the change against yesterday (amount and percent); “Yesterday” is a range option too
 - **Work Status section** (source mode): the host draws it from the service's answers — latest session in the project folder (incl. subagents), today's cost, balance, the peak/off-peak phase and switch countdown, with a refresh button in the header. Requires OpenChamber 2.5.2+ (`contributes.statusSection.source`)
 - **Dashboard**: “Extension pages” → DeepSeek Usage — a 12-week calendar heatmap and a session ranking (click a row to open that session)
 - **Bilingual UI**: follows the host locale (zh-* → Chinese, otherwise English)

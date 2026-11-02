@@ -187,6 +187,46 @@ body {
   white-space: nowrap;
 }
 
+.srank {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+.srank:hover {
+  background: color-mix(in srgb, currentColor 7%, transparent);
+}
+
+.srank .no {
+  font-size: 10px;
+  opacity: 0.5;
+  text-align: right;
+}
+
+.srank .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.srank .meta {
+  font-size: 11px;
+  opacity: 0.62;
+  white-space: nowrap;
+}
+
+.srank .val {
+  font-size: 11px;
+  opacity: 0.8;
+  text-align: right;
+  white-space: nowrap;
+}
+
 .pricing {
   border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
   border-radius: 8px;

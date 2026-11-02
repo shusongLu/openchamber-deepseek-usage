@@ -36,6 +36,17 @@ interface ModelAgg extends DayAgg {
   tier: 'flash' | 'pro' | null;
 }
 
+interface SessionRank {
+  id: string;
+  title: string;
+  official: number;
+  cost: number;
+  requests: number;
+  tokens: Tokens;
+  startedAt: number;
+  lastMessageAt: number;
+}
+
 interface SessionSide {
   requests: number;
   tokens: Tokens;
@@ -125,7 +136,10 @@ const L = {
     todayCost: '今日费用（官方价）',
     todaySub: (n: string, tokens: string) => `${n} 次 · ${tokens} tokens`,
     todayNone: '今日暂无调用',
+    vsYesterday: (delta: string, pct: string) => `较昨日 ${delta}${pct}`,
+    yesterdayZero: '昨日 ¥0',
     tabToday: '今日',
+    tabYesterday: '昨日',
     tab7: '近 7 天',
     tab30: '近 30 天',
     requests: '请求数',
@@ -137,8 +151,10 @@ const L = {
     offCost: '其中谷时',
     opencodeCost: 'OpenCode 记账',
     byDay: '按日',
+    ranking: '会话排行',
     byModel: '按模型',
     noData: '暂无数据',
+    openFailed: (msg: string) => `打开会话失败：${msg}`,
     pricing: '谷峰价目（元 / 1M tokens）',
     pricingNote: '格式：谷时 / 峰时；输出含推理 tokens',
     dbMessages: (n: string) => `opencode.db · ${n} 条消息`,
@@ -183,7 +199,10 @@ const L = {
     todayCost: "Today's cost (official)",
     todaySub: (n: string, tokens: string) => `${n} calls · ${tokens} tokens`,
     todayNone: 'No calls today',
+    vsYesterday: (delta: string, pct: string) => `vs yesterday ${delta}${pct}`,
+    yesterdayZero: 'yesterday ¥0',
     tabToday: 'Today',
+    tabYesterday: 'Yesterday',
     tab7: 'Last 7 days',
     tab30: 'Last 30 days',
     requests: 'Requests',
@@ -195,8 +214,10 @@ const L = {
     offCost: 'of which off-peak',
     opencodeCost: 'OpenCode recorded',
     byDay: 'By day',
+    ranking: 'Session ranking',
     byModel: 'By model',
     noData: 'No data',
+    openFailed: (msg: string) => `Could not open session: ${msg}`,
     pricing: 'Peak / off-peak pricing (CNY / 1M tokens)',
     pricingNote: 'Format: off-peak / peak; output includes reasoning tokens',
     dbMessages: (n: string) => `opencode.db · ${n} messages`,
@@ -232,7 +253,10 @@ const days = 30;
 let mounted = false;
 let loading = false;
 let lastSummary: Summary | null = null;
-let activeTab = '7d';
+type TabId = 'today' | 'yesterday' | '7d' | '30d';
+
+let activeTab: TabId = '7d';
+let lastSessions: SessionRank[] = [];
 let countdownTarget: number | null = null;
 let currentSessionId: string | null = null;
 let refreshHandle: ReturnType<typeof mountButton> | null = null;
@@ -272,10 +296,13 @@ const todayCard = el('div', 'card');
 const todayK = el('div', 'k', T().todayCost);
 const todayV = el('div', 'v', '—');
 const todayS = el('div', 'sub');
+const todayCmp = el('div', 'sub');
 const tabsSlot = el('div');
 const stats = el('div', 'grid');
 const daysSection = el('div', 'section', T().byDay);
 const daysList = el('div', 'days');
+const rankingSection = el('div', 'section', T().ranking);
+const rankingList = el('div', 'days');
 const modelsSection = el('div', 'section', T().byModel);
 const modelsList = el('div', 'days');
 const pricing = el('details', 'pricing');
@@ -284,13 +311,13 @@ const pricingBody = el('div');
 const foot = el('div', 'foot small muted');
 
 balCard.append(balK, balV, balS);
-todayCard.append(todayK, todayV, todayS);
+todayCard.append(todayK, todayV, todayS, todayCmp);
 sessionCard.append(sessionK, sessionV, sessionS, sessionT);
 cards.append(sessionCard, balCard, todayCard);
 headRight.append(updated, refreshSlot);
 head.append(title, headRight);
 pricing.append(pricingSummary, pricingBody);
-wrap.append(head, bannerSlot, countdownEl, cards, tabsSlot, stats, daysSection, daysList, modelsSection, modelsList, pricing, foot);
+wrap.append(head, bannerSlot, countdownEl, cards, tabsSlot, stats, daysSection, daysList, rankingSection, rankingList, modelsSection, modelsList, pricing, foot);
 root.append(wrap);
 
 let bannerHandle: ReturnType<typeof mountBanner> | null = null;
@@ -347,12 +374,37 @@ function fmtDuration(ms: number): string {
 
 // ---------------------------------------------------------------- 数据
 
-async function loadData(): Promise<Summary> {
-  if (MOCK) return mockSummary();
+function rangeFor(tab: TabId): { since: number; until: number } {
+  const now = Date.now();
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const startToday = start.getTime();
+  if (tab === 'today') return { since: startToday, until: now };
+  if (tab === 'yesterday') {
+    const y = new Date(start);
+    y.setDate(y.getDate() - 1);
+    return { since: y.getTime(), until: startToday };
+  }
+  const span = tab === '7d' ? 7 : 30;
+  return { since: now - span * 86_400_000, until: now };
+}
+
+async function loadData(): Promise<{ summary: Summary; sessions: SessionRank[] }> {
+  if (MOCK) return { summary: mockSummary(), sessions: mockSessions() };
+  const range = rangeFor(activeTab);
   const query: Record<string, string> = { days: String(days) };
   if (currentSessionId) query.session = currentSessionId;
-  const res = await host.serviceRequest({ method: 'GET', path: '/summary', query });
-  return JSON.parse(res.body) as Summary;
+  const [summaryRes, sessionsRes] = await Promise.all([
+    host.serviceRequest({ method: 'GET', path: '/summary', query }),
+    host.serviceRequest({
+      method: 'GET',
+      path: '/sessions',
+      query: { since: String(range.since), until: String(range.until), limit: '5' },
+    }),
+  ]);
+  const summary = JSON.parse(summaryRes.body) as Summary;
+  const ranking = JSON.parse(sessionsRes.body) as { ok: boolean; sessions?: SessionRank[] };
+  return { summary, sessions: ranking.ok && ranking.sessions ? ranking.sessions : [] };
 }
 
 function sumDays(list: DayAgg[]): {
@@ -387,6 +439,7 @@ function sumDays(list: DayAgg[]): {
 function windowDays(s: Summary): DayAgg[] {
   const all = s.days ?? [];
   if (activeTab === 'today') return all.slice(-1);
+  if (activeTab === 'yesterday') return all.slice(-2, -1);
   if (activeTab === '7d') return all.slice(-7);
   return all;
 }
@@ -450,6 +503,18 @@ function renderStats(s: Summary): void {
     todayV.textContent = '¥0.000';
     todayS.textContent = t.todayNone;
   }
+
+  const daysArr = s.days ?? [];
+  const todayCost = daysArr.length > 0 ? daysArr[daysArr.length - 1].official : 0;
+  const yesterdayCost = daysArr.length > 1 ? daysArr[daysArr.length - 2].official : 0;
+  if (yesterdayCost > 0) {
+    const delta = todayCost - yesterdayCost;
+    const sign = delta >= 0 ? '+' : '-';
+    const pct = Math.abs((delta / yesterdayCost) * 100);
+    todayCmp.textContent = t.vsYesterday(`${sign}${fmtCny(Math.abs(delta))}`, ` (${sign}${pct.toFixed(0)}%)`);
+  } else {
+    todayCmp.textContent = t.yesterdayZero;
+  }
 }
 
 function renderDays(s: Summary): void {
@@ -500,6 +565,67 @@ function renderModels(s: Summary): void {
       return row;
     }),
   );
+}
+
+function renderRanking(): void {
+  const t = T();
+  if (lastSessions.length === 0) {
+    rankingList.replaceChildren(el('div', 'small muted', t.noData));
+    return;
+  }
+  rankingList.replaceChildren(
+    ...lastSessions.map((s, index) => {
+      const row = el('div', 'srank');
+      row.title = s.id;
+      row.append(
+        el('div', 'no', String(index + 1)),
+        el('div', 'name', s.title || s.id),
+        el('div', 'meta', `${fmtInt(s.requests)} · ${fmtDateTime(s.lastMessageAt || s.startedAt)}`),
+        el('div', 'val', fmtCny(s.official)),
+      );
+      row.addEventListener('click', () => {
+        void (async () => {
+          try {
+            await host.openSession(s.id);
+          } catch (error) {
+            await host.toast({
+              kind: 'error',
+              message: t.openFailed(error instanceof Error ? error.message : String(error)),
+              dismiss: true,
+            });
+          }
+        })();
+      });
+      return row;
+    }),
+  );
+}
+
+let rankingLoading = false;
+
+async function refreshRanking(): Promise<void> {
+  if (rankingLoading) return;
+  rankingLoading = true;
+  try {
+    if (MOCK) {
+      lastSessions = mockSessions();
+    } else {
+      const range = rangeFor(activeTab);
+      const res = await host.serviceRequest({
+        method: 'GET',
+        path: '/sessions',
+        query: { since: String(range.since), until: String(range.until), limit: '5' },
+      });
+      const parsed = JSON.parse(res.body) as { ok: boolean; sessions?: SessionRank[] };
+      lastSessions = parsed.ok && parsed.sessions ? parsed.sessions : [];
+    }
+    renderRanking();
+  } catch {
+    lastSessions = [];
+    renderRanking();
+  } finally {
+    rankingLoading = false;
+  }
 }
 
 function renderPricing(s: Summary): void {
@@ -568,7 +694,8 @@ function renderFooter(s: Summary): void {
   foot.replaceChildren(el('div', undefined, bits.join(' · ')), el('div', undefined, t.note));
 }
 
-function renderAll(s: Summary): void {
+function renderAll(s: Summary, sessions?: SessionRank[]): void {
+  if (sessions) lastSessions = sessions;
   lastSummary = s;
   countdownTarget = s.now?.nextChangeAt ?? null;
   renderBanner(s);
@@ -576,6 +703,7 @@ function renderAll(s: Summary): void {
   renderBalance(s);
   renderStats(s);
   renderDays(s);
+  renderRanking();
   renderModels(s);
   renderFooter(s);
   updated.textContent = T().updatedAt(new Date(s.generatedAt).toLocaleTimeString(lang === 'zh' ? 'zh-CN' : 'en-GB', { hour12: false }));
@@ -599,8 +727,8 @@ async function refresh(): Promise<void> {
   if (loading) return;
   loading = true;
   try {
-    const summary = await loadData();
-    renderAll(summary);
+    const { summary, sessions } = await loadData();
+    renderAll(summary, sessions);
   } catch (error) {
     renderError(error);
   } finally {
@@ -612,6 +740,7 @@ function renderTabs(): void {
   const t = T();
   const items = [
     { id: 'today', label: t.tabToday },
+    { id: 'yesterday', label: t.tabYesterday },
     { id: '7d', label: t.tab7 },
     { id: '30d', label: t.tab30 },
   ];
@@ -620,9 +749,10 @@ function renderTabs(): void {
       items,
       activeId: activeTab,
       onChange: (next: string) => {
-        activeTab = next;
+        activeTab = next as TabId;
         tabsHandle?.update({ activeId: next });
         if (lastSummary) renderStats(lastSummary);
+        void refreshRanking();
       },
     });
     return;
@@ -637,6 +767,7 @@ function applyLocale(): void {
   balK.textContent = t.balance;
   todayK.textContent = t.todayCost;
   daysSection.textContent = t.byDay;
+  rankingSection.textContent = t.ranking;
   modelsSection.textContent = t.byModel;
   pricingSummary.textContent = t.pricing;
   refreshHandle?.update({ label: t.refresh });
@@ -803,4 +934,33 @@ function mockSummary(): Summary {
     days,
     notes: [],
   };
+}
+
+function mockSessions(): SessionRank[] {
+  const now = Date.now();
+  const titles = [
+    'OpenChamber 扩展清单查看',
+    '重新审查现有 BUG',
+    'HFTMS 全项目代码审查',
+    '中文道路运输证 OCR 识别失败排查',
+    'BillController 补充修改接口',
+  ];
+  const amounts = [16.9, 12.4, 9.8, 7.1, 5.6];
+  const calls = [1133, 842, 611, 488, 402];
+  return titles.map((title, i) => ({
+    id: `ses_mock_${i}`,
+    title,
+    official: amounts[i],
+    cost: amounts[i] * 0.62,
+    requests: calls[i],
+    tokens: {
+      input: calls[i] * 300,
+      output: calls[i] * 120,
+      reasoning: calls[i] * 50,
+      cacheRead: calls[i] * 9000,
+      cacheWrite: 0,
+    },
+    startedAt: now - (i + 1) * 5 * 3_600_000,
+    lastMessageAt: now - (i + 1) * 3_600_000,
+  }));
 }

@@ -433,11 +433,10 @@ function sessionToCny(agg, fxRate) {
     children: { ...agg.children, cost: agg.children.cost * fxRate }
   };
 }
-function rankSessions(data, days, limit) {
-  const cutoff = Date.now() - days * 864e5;
+function rankSessions(data, sinceMs, untilMs, limit) {
   const roots = /* @__PURE__ */ new Map();
   for (const row of data.rows) {
-    if (row.ts < cutoff) continue;
+    if (row.ts < sinceMs || row.ts > untilMs) continue;
     let sid = row.sid;
     let parent = data.meta.get(sid)?.parentId ?? null;
     let guard = 0;
@@ -944,11 +943,18 @@ var server = (0, import_node_http.createServer)((req, res) => {
           sendJson(res, 404, { ok: false, error: usage.error });
           return;
         }
-        const { sessions } = rankSessions(usage.data, daysParam, limit);
+        const now = Date.now();
+        const sinceRaw = Number(url.searchParams.get("since") || "");
+        const untilRaw = Number(url.searchParams.get("until") || "");
+        const since = Number.isFinite(sinceRaw) && sinceRaw > 0 ? sinceRaw : now - daysParam * 864e5;
+        const until = Number.isFinite(untilRaw) && untilRaw > since ? untilRaw : now;
+        const { sessions } = rankSessions(usage.data, since, until, limit);
         const fx = await getFxRate();
         sendJson(res, 200, {
           ok: true,
           days: daysParam,
+          since,
+          until,
           sessions: sessions.map((s) => ({ ...s, cost: s.cost * fx.rate })),
           fx: { usdCny: Number(fx.rate.toFixed(4)), source: fx.source }
         });

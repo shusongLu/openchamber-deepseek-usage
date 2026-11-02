@@ -2076,7 +2076,10 @@ ${GUEST_UI_LOOK_CSS}`;
       todayCost: "\u4ECA\u65E5\u8D39\u7528\uFF08\u5B98\u65B9\u4EF7\uFF09",
       todaySub: (n, tokens) => `${n} \u6B21 \xB7 ${tokens} tokens`,
       todayNone: "\u4ECA\u65E5\u6682\u65E0\u8C03\u7528",
+      vsYesterday: (delta, pct) => `\u8F83\u6628\u65E5 ${delta}${pct}`,
+      yesterdayZero: "\u6628\u65E5 \xA50",
       tabToday: "\u4ECA\u65E5",
+      tabYesterday: "\u6628\u65E5",
       tab7: "\u8FD1 7 \u5929",
       tab30: "\u8FD1 30 \u5929",
       requests: "\u8BF7\u6C42\u6570",
@@ -2088,8 +2091,10 @@ ${GUEST_UI_LOOK_CSS}`;
       offCost: "\u5176\u4E2D\u8C37\u65F6",
       opencodeCost: "OpenCode \u8BB0\u8D26",
       byDay: "\u6309\u65E5",
+      ranking: "\u4F1A\u8BDD\u6392\u884C",
       byModel: "\u6309\u6A21\u578B",
       noData: "\u6682\u65E0\u6570\u636E",
+      openFailed: (msg) => `\u6253\u5F00\u4F1A\u8BDD\u5931\u8D25\uFF1A${msg}`,
       pricing: "\u8C37\u5CF0\u4EF7\u76EE\uFF08\u5143 / 1M tokens\uFF09",
       pricingNote: "\u683C\u5F0F\uFF1A\u8C37\u65F6 / \u5CF0\u65F6\uFF1B\u8F93\u51FA\u542B\u63A8\u7406 tokens",
       dbMessages: (n) => `opencode.db \xB7 ${n} \u6761\u6D88\u606F`,
@@ -2133,7 +2138,10 @@ ${GUEST_UI_LOOK_CSS}`;
       todayCost: "Today's cost (official)",
       todaySub: (n, tokens) => `${n} calls \xB7 ${tokens} tokens`,
       todayNone: "No calls today",
+      vsYesterday: (delta, pct) => `vs yesterday ${delta}${pct}`,
+      yesterdayZero: "yesterday \xA50",
       tabToday: "Today",
+      tabYesterday: "Yesterday",
       tab7: "Last 7 days",
       tab30: "Last 30 days",
       requests: "Requests",
@@ -2145,8 +2153,10 @@ ${GUEST_UI_LOOK_CSS}`;
       offCost: "of which off-peak",
       opencodeCost: "OpenCode recorded",
       byDay: "By day",
+      ranking: "Session ranking",
       byModel: "By model",
       noData: "No data",
+      openFailed: (msg) => `Could not open session: ${msg}`,
       pricing: "Peak / off-peak pricing (CNY / 1M tokens)",
       pricingNote: "Format: off-peak / peak; output includes reasoning tokens",
       dbMessages: (n) => `opencode.db \xB7 ${n} messages`,
@@ -2176,6 +2186,7 @@ ${GUEST_UI_LOOK_CSS}`;
   var loading = false;
   var lastSummary = null;
   var activeTab = "7d";
+  var lastSessions = [];
   var countdownTarget = null;
   var currentSessionId = null;
   var refreshHandle = null;
@@ -2207,10 +2218,13 @@ ${GUEST_UI_LOOK_CSS}`;
   var todayK = el2("div", "k", T().todayCost);
   var todayV = el2("div", "v", "\u2014");
   var todayS = el2("div", "sub");
+  var todayCmp = el2("div", "sub");
   var tabsSlot = el2("div");
   var stats = el2("div", "grid");
   var daysSection = el2("div", "section", T().byDay);
   var daysList = el2("div", "days");
+  var rankingSection = el2("div", "section", T().ranking);
+  var rankingList = el2("div", "days");
   var modelsSection = el2("div", "section", T().byModel);
   var modelsList = el2("div", "days");
   var pricing = el2("details", "pricing");
@@ -2218,13 +2232,13 @@ ${GUEST_UI_LOOK_CSS}`;
   var pricingBody = el2("div");
   var foot = el2("div", "foot small muted");
   balCard.append(balK, balV, balS);
-  todayCard.append(todayK, todayV, todayS);
+  todayCard.append(todayK, todayV, todayS, todayCmp);
   sessionCard.append(sessionK, sessionV, sessionS, sessionT);
   cards.append(sessionCard, balCard, todayCard);
   headRight.append(updated, refreshSlot);
   head.append(title, headRight);
   pricing.append(pricingSummary, pricingBody);
-  wrap.append(head, bannerSlot, countdownEl, cards, tabsSlot, stats, daysSection, daysList, modelsSection, modelsList, pricing, foot);
+  wrap.append(head, bannerSlot, countdownEl, cards, tabsSlot, stats, daysSection, daysList, rankingSection, rankingList, modelsSection, modelsList, pricing, foot);
   root.append(wrap);
   var bannerHandle = null;
   var tabsHandle = null;
@@ -2265,12 +2279,36 @@ ${GUEST_UI_LOOK_CSS}`;
     if (h > 0) return `${h}h ${m}m`;
     return `${m}m`;
   }
+  function rangeFor(tab) {
+    const now = Date.now();
+    const start = /* @__PURE__ */ new Date();
+    start.setHours(0, 0, 0, 0);
+    const startToday = start.getTime();
+    if (tab === "today") return { since: startToday, until: now };
+    if (tab === "yesterday") {
+      const y = new Date(start);
+      y.setDate(y.getDate() - 1);
+      return { since: y.getTime(), until: startToday };
+    }
+    const span = tab === "7d" ? 7 : 30;
+    return { since: now - span * 864e5, until: now };
+  }
   async function loadData() {
-    if (MOCK) return mockSummary();
+    if (MOCK) return { summary: mockSummary(), sessions: mockSessions() };
+    const range = rangeFor(activeTab);
     const query = { days: String(days) };
     if (currentSessionId) query.session = currentSessionId;
-    const res = await host.serviceRequest({ method: "GET", path: "/summary", query });
-    return JSON.parse(res.body);
+    const [summaryRes, sessionsRes] = await Promise.all([
+      host.serviceRequest({ method: "GET", path: "/summary", query }),
+      host.serviceRequest({
+        method: "GET",
+        path: "/sessions",
+        query: { since: String(range.since), until: String(range.until), limit: "5" }
+      })
+    ]);
+    const summary = JSON.parse(summaryRes.body);
+    const ranking = JSON.parse(sessionsRes.body);
+    return { summary, sessions: ranking.ok && ranking.sessions ? ranking.sessions : [] };
   }
   function sumDays(list) {
     const tokens = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 };
@@ -2296,6 +2334,7 @@ ${GUEST_UI_LOOK_CSS}`;
   function windowDays(s) {
     const all = s.days ?? [];
     if (activeTab === "today") return all.slice(-1);
+    if (activeTab === "yesterday") return all.slice(-2, -1);
     if (activeTab === "7d") return all.slice(-7);
     return all;
   }
@@ -2349,6 +2388,17 @@ ${GUEST_UI_LOOK_CSS}`;
       todayV.textContent = "\xA50.000";
       todayS.textContent = t.todayNone;
     }
+    const daysArr = s.days ?? [];
+    const todayCost = daysArr.length > 0 ? daysArr[daysArr.length - 1].official : 0;
+    const yesterdayCost = daysArr.length > 1 ? daysArr[daysArr.length - 2].official : 0;
+    if (yesterdayCost > 0) {
+      const delta = todayCost - yesterdayCost;
+      const sign = delta >= 0 ? "+" : "-";
+      const pct = Math.abs(delta / yesterdayCost * 100);
+      todayCmp.textContent = t.vsYesterday(`${sign}${fmtCny(Math.abs(delta))}`, ` (${sign}${pct.toFixed(0)}%)`);
+    } else {
+      todayCmp.textContent = t.yesterdayZero;
+    }
   }
   function renderDays(s) {
     const list = (s.days ?? []).slice(-14);
@@ -2394,6 +2444,64 @@ ${GUEST_UI_LOOK_CSS}`;
       })
     );
   }
+  function renderRanking() {
+    const t = T();
+    if (lastSessions.length === 0) {
+      rankingList.replaceChildren(el2("div", "small muted", t.noData));
+      return;
+    }
+    rankingList.replaceChildren(
+      ...lastSessions.map((s, index) => {
+        const row = el2("div", "srank");
+        row.title = s.id;
+        row.append(
+          el2("div", "no", String(index + 1)),
+          el2("div", "name", s.title || s.id),
+          el2("div", "meta", `${fmtInt(s.requests)} \xB7 ${fmtDateTime(s.lastMessageAt || s.startedAt)}`),
+          el2("div", "val", fmtCny(s.official))
+        );
+        row.addEventListener("click", () => {
+          void (async () => {
+            try {
+              await host.openSession(s.id);
+            } catch (error) {
+              await host.toast({
+                kind: "error",
+                message: t.openFailed(error instanceof Error ? error.message : String(error)),
+                dismiss: true
+              });
+            }
+          })();
+        });
+        return row;
+      })
+    );
+  }
+  var rankingLoading = false;
+  async function refreshRanking() {
+    if (rankingLoading) return;
+    rankingLoading = true;
+    try {
+      if (MOCK) {
+        lastSessions = mockSessions();
+      } else {
+        const range = rangeFor(activeTab);
+        const res = await host.serviceRequest({
+          method: "GET",
+          path: "/sessions",
+          query: { since: String(range.since), until: String(range.until), limit: "5" }
+        });
+        const parsed = JSON.parse(res.body);
+        lastSessions = parsed.ok && parsed.sessions ? parsed.sessions : [];
+      }
+      renderRanking();
+    } catch {
+      lastSessions = [];
+      renderRanking();
+    } finally {
+      rankingLoading = false;
+    }
+  }
   function renderSession(s) {
     const t = T();
     const sess = s.session ?? null;
@@ -2431,7 +2539,8 @@ ${GUEST_UI_LOOK_CSS}`;
     if (s.fx) bits.push(t.fx(String(s.fx.usdCny), s.fx.source));
     foot.replaceChildren(el2("div", void 0, bits.join(" \xB7 ")), el2("div", void 0, t.note));
   }
-  function renderAll(s) {
+  function renderAll(s, sessions) {
+    if (sessions) lastSessions = sessions;
     lastSummary = s;
     countdownTarget = s.now?.nextChangeAt ?? null;
     renderBanner(s);
@@ -2439,6 +2548,7 @@ ${GUEST_UI_LOOK_CSS}`;
     renderBalance(s);
     renderStats(s);
     renderDays(s);
+    renderRanking();
     renderModels(s);
     renderFooter(s);
     updated.textContent = T().updatedAt(new Date(s.generatedAt).toLocaleTimeString(lang === "zh" ? "zh-CN" : "en-GB", { hour12: false }));
@@ -2458,8 +2568,8 @@ ${GUEST_UI_LOOK_CSS}`;
     if (loading) return;
     loading = true;
     try {
-      const summary = await loadData();
-      renderAll(summary);
+      const { summary, sessions } = await loadData();
+      renderAll(summary, sessions);
     } catch (error) {
       renderError(error);
     } finally {
@@ -2470,6 +2580,7 @@ ${GUEST_UI_LOOK_CSS}`;
     const t = T();
     const items = [
       { id: "today", label: t.tabToday },
+      { id: "yesterday", label: t.tabYesterday },
       { id: "7d", label: t.tab7 },
       { id: "30d", label: t.tab30 }
     ];
@@ -2481,6 +2592,7 @@ ${GUEST_UI_LOOK_CSS}`;
           activeTab = next;
           tabsHandle?.update({ activeId: next });
           if (lastSummary) renderStats(lastSummary);
+          void refreshRanking();
         }
       });
       return;
@@ -2494,6 +2606,7 @@ ${GUEST_UI_LOOK_CSS}`;
     balK.textContent = t.balance;
     todayK.textContent = t.todayCost;
     daysSection.textContent = t.byDay;
+    rankingSection.textContent = t.ranking;
     modelsSection.textContent = t.byModel;
     pricingSummary.textContent = t.pricing;
     refreshHandle?.update({ label: t.refresh });
@@ -2654,5 +2767,33 @@ ${GUEST_UI_LOOK_CSS}`;
       days: days2,
       notes: []
     };
+  }
+  function mockSessions() {
+    const now = Date.now();
+    const titles = [
+      "OpenChamber \u6269\u5C55\u6E05\u5355\u67E5\u770B",
+      "\u91CD\u65B0\u5BA1\u67E5\u73B0\u6709 BUG",
+      "HFTMS \u5168\u9879\u76EE\u4EE3\u7801\u5BA1\u67E5",
+      "\u4E2D\u6587\u9053\u8DEF\u8FD0\u8F93\u8BC1 OCR \u8BC6\u522B\u5931\u8D25\u6392\u67E5",
+      "BillController \u8865\u5145\u4FEE\u6539\u63A5\u53E3"
+    ];
+    const amounts = [16.9, 12.4, 9.8, 7.1, 5.6];
+    const calls = [1133, 842, 611, 488, 402];
+    return titles.map((title2, i) => ({
+      id: `ses_mock_${i}`,
+      title: title2,
+      official: amounts[i],
+      cost: amounts[i] * 0.62,
+      requests: calls[i],
+      tokens: {
+        input: calls[i] * 300,
+        output: calls[i] * 120,
+        reasoning: calls[i] * 50,
+        cacheRead: calls[i] * 9e3,
+        cacheWrite: 0
+      },
+      startedAt: now - (i + 1) * 5 * 36e5,
+      lastMessageAt: now - (i + 1) * 36e5
+    }));
   }
 })();

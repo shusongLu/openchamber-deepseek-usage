@@ -13,11 +13,12 @@
  * 运行方式：由 OpenChamber host 以 Electron-as-Node 启动，
  * 端口与鉴权 token 来自 OPENCHAMBER_SERVICE_PORT / OPENCHAMBER_SERVICE_TOKEN。
  */
-import { createServer, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import type { GuestStatusRow, GuestStatusView } from '@openchamber/sdk';
 
 const PORT = Number(process.env.OPENCHAMBER_SERVICE_PORT || 0);
 const TOKEN = process.env.OPENCHAMBER_SERVICE_TOKEN || '';
@@ -87,6 +88,25 @@ function localDate(ms: number): string {
   const p = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
+
+function totalTokens(t: Tokens): number {
+  return t.input + t.output + t.reasoning + t.cacheRead + t.cacheWrite;
+}
+
+function fmtTokens(n: number): string {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+  return String(Math.round(n));
+}
+
+function fmtCny(n: number): string {
+  if (n >= 100) return `¥${n.toFixed(1)}`;
+  if (n >= 1) return `¥${n.toFixed(2)}`;
+  return `¥${n.toFixed(3)}`;
+}
+
+const fmtInt = (n: number): string => Math.round(n).toLocaleString('en-US');
 
 interface Tokens {
   input: number;
@@ -226,6 +246,7 @@ interface SessionMetaRow {
   parentId: string | null;
   title: string;
   created: number;
+  directory: string;
 }
 
 interface UsageData {
@@ -332,8 +353,8 @@ function loadMeta(
   const sessions = db
     .prepare(
       schema === 'v2'
-        ? 'SELECT id, parent_id AS parentId, title, time_created AS created FROM session_v2'
-        : 'SELECT id, parent_id AS parentId, title, time_created AS created FROM session',
+        ? 'SELECT id, parent_id AS parentId, title, time_created AS created, directory FROM session_v2'
+        : 'SELECT id, parent_id AS parentId, title, time_created AS created, directory FROM session',
     )
     .all() as Array<Record<string, unknown>>;
   for (const s of sessions) {
@@ -341,6 +362,7 @@ function loadMeta(
       parentId: s.parentId ? String(s.parentId) : null,
       title: String(s.title ?? ''),
       created: num(s.created),
+      directory: String(s.directory ?? ''),
     });
   }
   for (const [id, m] of meta) {
@@ -1016,6 +1038,179 @@ async function buildSummary(days: number, sessionId?: string | null): Promise<Re
   };
 }
 
+// ---------------------------------------------------------------- Work Status 区块（source 模式）
+
+function normalizeDir(value: string | null | undefined): string {
+  return (value ?? '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
+function countdownShort(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+const STATUS_TEXT = {
+  zh: {
+    session: '本会话',
+    sessionTip: (main: string, children: string, calls: string) => `主 ${main} · 子代理 ${children} · ${calls} 次`,
+    today: '今日',
+    todayTip: (calls: string, tokens: string) => `${calls} 次 · ${tokens} tokens`,
+    balance: '余额',
+    balanceTip: (top: string, granted: string) => `充值 ${top} · 赠送 ${granted}`,
+    noKey: '未找到本机 DeepSeek key',
+    balanceUnavailable: '余额不可用',
+    phase: '峰谷',
+    peak: '峰时',
+    offpeak: '谷时',
+    switchesIn: (time: string) => `距切换 ${time}`,
+    note: '官方价按人民币价目与峰谷时段重算',
+    refresh: '刷新',
+  },
+  en: {
+    session: 'Session',
+    sessionTip: (main: string, children: string, calls: string) => `main ${main} · subagents ${children} · ${calls} calls`,
+    today: 'Today',
+    todayTip: (calls: string, tokens: string) => `${calls} calls · ${tokens} tokens`,
+    balance: 'Balance',
+    balanceTip: (top: string, granted: string) => `topped-up ${top} · granted ${granted}`,
+    noKey: 'No local DeepSeek key',
+    balanceUnavailable: 'Balance unavailable',
+    phase: 'Peak',
+    peak: 'peak',
+    offpeak: 'off-peak',
+    switchesIn: (time: string) => `switches in ${time}`,
+    note: 'Official cost recomputed with the CNY price list and peak windows',
+    refresh: 'Refresh',
+  },
+} as const;
+
+function rootOfSession(data: UsageData, sessionId: string): string {
+  let sid = sessionId;
+  let parent = data.meta.get(sid)?.parentId ?? null;
+  let guard = 0;
+  while (parent && guard < 64) {
+    sid = parent;
+    parent = data.meta.get(sid)?.parentId ?? null;
+    guard += 1;
+  }
+  return sid;
+}
+
+/** source 模式拿不到 session id，只能按目录内「最近活动」推断当前会话 */
+function latestSessionInDirectory(data: UsageData, directory: string): SessionAgg | null {
+  const dir = normalizeDir(directory);
+  if (!dir) return null;
+
+  const lastByRoot = new Map<string, number>();
+  for (const row of data.rows) {
+    const root = rootOfSession(data, row.sid);
+    const prev = lastByRoot.get(root) ?? 0;
+    if (row.ts > prev) lastByRoot.set(root, row.ts);
+  }
+
+  let bestId: string | null = null;
+  let bestTs = -1;
+  for (const [id, meta] of data.meta) {
+    if (meta.parentId) continue;
+    if (normalizeDir(meta.directory) !== dir) continue;
+    const ts = lastByRoot.get(id) ?? 0;
+    if (ts > bestTs) {
+      bestTs = ts;
+      bestId = id;
+    }
+  }
+  return bestId ? aggregateSession(data, bestId) : null;
+}
+
+async function buildStatusView(locale: string | null, directory: string | null): Promise<GuestStatusView> {
+  const zh = String(locale ?? '').toLowerCase().startsWith('zh');
+  const text = STATUS_TEXT[zh ? 'zh' : 'en'];
+  const usage = getUsage();
+  const now = Date.now();
+  const peak = isPeak(new Date(now));
+  const change = nextChange(now);
+
+  if ('error' in usage) {
+    return { rows: [{ kind: 'note', id: 'error', text: usage.error, tone: 'error' }], controls: [] };
+  }
+
+  const { data, snapshot } = usage;
+  const today = snapshot.days.get(localDate(now)) ?? null;
+  const session = directory ? latestSessionInDirectory(data, directory) : null;
+  const balance = await getBalance();
+  const sym = balance.currency === 'CNY' ? '¥' : balance.currency ? `${balance.currency} ` : '';
+
+  const rows: GuestStatusRow[] = [];
+
+  if (session) {
+    rows.push({
+      kind: 'line',
+      id: 'session',
+      label: text.session,
+      icon: 'chat-3',
+      value: fmtCny(session.official),
+      tooltip: text.sessionTip(
+        fmtCny(session.main.official),
+        fmtCny(session.children.official),
+        fmtInt(session.requests),
+      ),
+    });
+  }
+
+  rows.push({
+    kind: 'line',
+    id: 'today',
+    label: text.today,
+    icon: 'calendar',
+    value: fmtCny(today?.official ?? 0),
+    tooltip: text.todayTip(fmtInt(today?.requests ?? 0), fmtTokens(today ? totalTokens(today.tokens) : 0)),
+  });
+
+  rows.push({
+    kind: 'line',
+    id: 'balance',
+    label: text.balance,
+    icon: 'wallet-3',
+    value: balance.ok ? `${sym}${balance.total ?? '—'}` : '—',
+    valueTone: balance.ok && balance.isAvailable === false ? 'warning' : 'default',
+    tooltip: balance.ok
+      ? text.balanceTip(`${sym}${balance.toppedUp ?? '—'}`, `${sym}${balance.granted ?? '—'}`)
+      : balance.reason === 'no-key'
+        ? text.noKey
+        : text.balanceUnavailable,
+  });
+
+  rows.push({
+    kind: 'line',
+    id: 'phase',
+    label: text.phase,
+    icon: 'time',
+    dot: peak ? 'warning' : 'success',
+    value: `${peak ? text.peak : text.offpeak} · ${text.switchesIn(countdownShort(change.at - now))}`,
+  });
+
+  rows.push({ kind: 'note', id: 'note', text: text.note, tone: 'muted' });
+
+  return {
+    rows,
+    controls: [{ kind: 'button', id: 'refresh', label: text.refresh }],
+  };
+}
+
+async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown> | null> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) chunks.push(Buffer.from(chunk));
+  if (chunks.length === 0) return null;
+  try {
+    const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------- HTTP 服务
 
 function sendJson(res: ServerResponse, status: number, payload: unknown): void {
@@ -1103,6 +1298,17 @@ const server = createServer((req, res) => {
           sessions: sessions.map((s) => ({ ...s, cost: s.cost * fx.rate })),
           fx: { usdCny: Number(fx.rate.toFixed(4)), source: fx.source },
         });
+        return;
+      }
+
+      if (url.pathname === '/status') {
+        const locale = url.searchParams.get('locale');
+        const directory = url.searchParams.get('directory');
+        if (req.method === 'POST') {
+          const body = await readJsonBody(req);
+          if (body?.id === 'refresh' && usageCache) usageCache.at = 0;
+        }
+        sendJson(res, 200, await buildStatusView(locale, directory));
         return;
       }
 

@@ -47,6 +47,21 @@ function localDate(ms) {
   const p = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
+function totalTokens(t) {
+  return t.input + t.output + t.reasoning + t.cacheRead + t.cacheWrite;
+}
+function fmtTokens(n) {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+  return String(Math.round(n));
+}
+function fmtCny(n) {
+  if (n >= 100) return `\xA5${n.toFixed(1)}`;
+  if (n >= 1) return `\xA5${n.toFixed(2)}`;
+  return `\xA5${n.toFixed(3)}`;
+}
+var fmtInt = (n) => Math.round(n).toLocaleString("en-US");
 function emptyTokens() {
   return { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 };
 }
@@ -212,13 +227,14 @@ function loadMeta(db, schema) {
   const meta = /* @__PURE__ */ new Map();
   const children = /* @__PURE__ */ new Map();
   const sessions = db.prepare(
-    schema === "v2" ? "SELECT id, parent_id AS parentId, title, time_created AS created FROM session_v2" : "SELECT id, parent_id AS parentId, title, time_created AS created FROM session"
+    schema === "v2" ? "SELECT id, parent_id AS parentId, title, time_created AS created, directory FROM session_v2" : "SELECT id, parent_id AS parentId, title, time_created AS created, directory FROM session"
   ).all();
   for (const s of sessions) {
     meta.set(String(s.id), {
       parentId: s.parentId ? String(s.parentId) : null,
       title: String(s.title ?? ""),
-      created: num(s.created)
+      created: num(s.created),
+      directory: String(s.directory ?? "")
     });
   }
   for (const [id, m] of meta) {
@@ -709,6 +725,154 @@ async function buildSummary(days, sessionId) {
     notes: ["\u5B98\u65B9\u4EF7\u6309\u4EBA\u6C11\u5E01\u4EF7\u76EE\u4E0E\u5CF0\u8C37\u65F6\u6BB5\u9010\u6761\u91CD\u7B97\uFF1B\u7F13\u5B58\u4E0D\u8BA1\u5199\u5165\u8D39\uFF1BOpenCode \u8BB0\u8D26\u6309 USD\u2192CNY \u6298\u7B97"]
   };
 }
+function normalizeDir(value) {
+  return (value ?? "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+}
+function countdownShort(ms) {
+  const s = Math.max(0, Math.floor(ms / 1e3));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor(s % 3600 / 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+var STATUS_TEXT = {
+  zh: {
+    session: "\u672C\u4F1A\u8BDD",
+    sessionTip: (main, children, calls) => `\u4E3B ${main} \xB7 \u5B50\u4EE3\u7406 ${children} \xB7 ${calls} \u6B21`,
+    today: "\u4ECA\u65E5",
+    todayTip: (calls, tokens) => `${calls} \u6B21 \xB7 ${tokens} tokens`,
+    balance: "\u4F59\u989D",
+    balanceTip: (top, granted) => `\u5145\u503C ${top} \xB7 \u8D60\u9001 ${granted}`,
+    noKey: "\u672A\u627E\u5230\u672C\u673A DeepSeek key",
+    balanceUnavailable: "\u4F59\u989D\u4E0D\u53EF\u7528",
+    phase: "\u5CF0\u8C37",
+    peak: "\u5CF0\u65F6",
+    offpeak: "\u8C37\u65F6",
+    switchesIn: (time) => `\u8DDD\u5207\u6362 ${time}`,
+    note: "\u5B98\u65B9\u4EF7\u6309\u4EBA\u6C11\u5E01\u4EF7\u76EE\u4E0E\u5CF0\u8C37\u65F6\u6BB5\u91CD\u7B97",
+    refresh: "\u5237\u65B0"
+  },
+  en: {
+    session: "Session",
+    sessionTip: (main, children, calls) => `main ${main} \xB7 subagents ${children} \xB7 ${calls} calls`,
+    today: "Today",
+    todayTip: (calls, tokens) => `${calls} calls \xB7 ${tokens} tokens`,
+    balance: "Balance",
+    balanceTip: (top, granted) => `topped-up ${top} \xB7 granted ${granted}`,
+    noKey: "No local DeepSeek key",
+    balanceUnavailable: "Balance unavailable",
+    phase: "Peak",
+    peak: "peak",
+    offpeak: "off-peak",
+    switchesIn: (time) => `switches in ${time}`,
+    note: "Official cost recomputed with the CNY price list and peak windows",
+    refresh: "Refresh"
+  }
+};
+function rootOfSession(data, sessionId) {
+  let sid = sessionId;
+  let parent = data.meta.get(sid)?.parentId ?? null;
+  let guard = 0;
+  while (parent && guard < 64) {
+    sid = parent;
+    parent = data.meta.get(sid)?.parentId ?? null;
+    guard += 1;
+  }
+  return sid;
+}
+function latestSessionInDirectory(data, directory) {
+  const dir = normalizeDir(directory);
+  if (!dir) return null;
+  const lastByRoot = /* @__PURE__ */ new Map();
+  for (const row of data.rows) {
+    const root = rootOfSession(data, row.sid);
+    const prev = lastByRoot.get(root) ?? 0;
+    if (row.ts > prev) lastByRoot.set(root, row.ts);
+  }
+  let bestId = null;
+  let bestTs = -1;
+  for (const [id, meta] of data.meta) {
+    if (meta.parentId) continue;
+    if (normalizeDir(meta.directory) !== dir) continue;
+    const ts = lastByRoot.get(id) ?? 0;
+    if (ts > bestTs) {
+      bestTs = ts;
+      bestId = id;
+    }
+  }
+  return bestId ? aggregateSession(data, bestId) : null;
+}
+async function buildStatusView(locale, directory) {
+  const zh = String(locale ?? "").toLowerCase().startsWith("zh");
+  const text = STATUS_TEXT[zh ? "zh" : "en"];
+  const usage = getUsage();
+  const now = Date.now();
+  const peak = isPeak(new Date(now));
+  const change = nextChange(now);
+  if ("error" in usage) {
+    return { rows: [{ kind: "note", id: "error", text: usage.error, tone: "error" }], controls: [] };
+  }
+  const { data, snapshot } = usage;
+  const today = snapshot.days.get(localDate(now)) ?? null;
+  const session = directory ? latestSessionInDirectory(data, directory) : null;
+  const balance = await getBalance();
+  const sym = balance.currency === "CNY" ? "\xA5" : balance.currency ? `${balance.currency} ` : "";
+  const rows = [];
+  if (session) {
+    rows.push({
+      kind: "line",
+      id: "session",
+      label: text.session,
+      icon: "chat-3",
+      value: fmtCny(session.official),
+      tooltip: text.sessionTip(
+        fmtCny(session.main.official),
+        fmtCny(session.children.official),
+        fmtInt(session.requests)
+      )
+    });
+  }
+  rows.push({
+    kind: "line",
+    id: "today",
+    label: text.today,
+    icon: "calendar",
+    value: fmtCny(today?.official ?? 0),
+    tooltip: text.todayTip(fmtInt(today?.requests ?? 0), fmtTokens(today ? totalTokens(today.tokens) : 0))
+  });
+  rows.push({
+    kind: "line",
+    id: "balance",
+    label: text.balance,
+    icon: "wallet-3",
+    value: balance.ok ? `${sym}${balance.total ?? "\u2014"}` : "\u2014",
+    valueTone: balance.ok && balance.isAvailable === false ? "warning" : "default",
+    tooltip: balance.ok ? text.balanceTip(`${sym}${balance.toppedUp ?? "\u2014"}`, `${sym}${balance.granted ?? "\u2014"}`) : balance.reason === "no-key" ? text.noKey : text.balanceUnavailable
+  });
+  rows.push({
+    kind: "line",
+    id: "phase",
+    label: text.phase,
+    icon: "time",
+    dot: peak ? "warning" : "success",
+    value: `${peak ? text.peak : text.offpeak} \xB7 ${text.switchesIn(countdownShort(change.at - now))}`
+  });
+  rows.push({ kind: "note", id: "note", text: text.note, tone: "muted" });
+  return {
+    rows,
+    controls: [{ kind: "button", id: "refresh", label: text.refresh }]
+  };
+}
+async function readJsonBody(req) {
+  const chunks = [];
+  for await (const chunk of req) chunks.push(Buffer.from(chunk));
+  if (chunks.length === 0) return null;
+  try {
+    const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
 function sendJson(res, status, payload) {
   const body = JSON.stringify(payload);
   res.writeHead(status, { "content-type": "application/json; charset=utf-8", "content-length": Buffer.byteLength(body) });
@@ -788,6 +952,16 @@ var server = (0, import_node_http.createServer)((req, res) => {
           sessions: sessions.map((s) => ({ ...s, cost: s.cost * fx.rate })),
           fx: { usdCny: Number(fx.rate.toFixed(4)), source: fx.source }
         });
+        return;
+      }
+      if (url.pathname === "/status") {
+        const locale = url.searchParams.get("locale");
+        const directory = url.searchParams.get("directory");
+        if (req.method === "POST") {
+          const body = await readJsonBody(req);
+          if (body?.id === "refresh" && usageCache) usageCache.at = 0;
+        }
+        sendJson(res, 200, await buildStatusView(locale, directory));
         return;
       }
       if (url.pathname === "/balance") {

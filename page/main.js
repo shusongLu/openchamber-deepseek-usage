@@ -8,8 +8,9 @@
   var GUEST_SCROLLING_ATTRIBUTE = "data-oc-scrolling";
   var GUEST_SCROLLBAR_CSS = `
 :root {
-  --oc-scrollbar-thumb: color-mix(in srgb, var(--oc-muted, currentColor) 40%, transparent);
-  --oc-scrollbar-thumb-hover: color-mix(in srgb, var(--oc-muted, currentColor) 65%, transparent);
+  /* Quiet at rest like the app's own thumbs; hover gives a clear grab target. */
+  --oc-scrollbar-thumb: color-mix(in srgb, var(--oc-muted, currentColor) 18%, transparent);
+  --oc-scrollbar-thumb-hover: color-mix(in srgb, var(--oc-muted, currentColor) 36%, transparent);
   scrollbar-gutter: stable;
 }
 * {
@@ -114,6 +115,15 @@
     return true;
   };
 
+  // node_modules/@openchamber/sdk/dist/manifest.js
+  var TRACKER_URL_TOKENS = ["{id}", "{segment}", "{segments+}"];
+  var TRACKER_URL_TOKEN_SET = new Set(TRACKER_URL_TOKENS);
+
+  // node_modules/@openchamber/sdk/dist/session-events.js
+  var GUEST_SESSION_EVENT_TYPES = ["turn-finished", "turn-failed", "permission-asked", "question-asked"];
+  var SESSION_EVENTS_IDLE_MS = 10 * 6e4;
+  var EVENT_TYPES = new Set(GUEST_SESSION_EVENT_TYPES);
+
   // node_modules/@openchamber/sdk/dist/file-editor.js
   var GUEST_FILE_EDITOR_CONTENT_MAX = 2e7;
   var GUEST_FILE_EDITOR_VERSION_MAX = 256;
@@ -199,7 +209,8 @@
   var GUEST_GENERATE_PROMPT_MAX = 64e3;
   var GUEST_GENERATE_SYSTEM_MAX = 8e3;
   var GUEST_GENERATE_OUTPUT_TOKENS_MAX = 4e3;
-  var GUEST_GENERATE_TIMEOUT_MS = 9e4;
+  var GUEST_GENERATE_TIMEOUT_MS = 96e4;
+  var GUEST_GENERATE_LATE_KEEP_MS = 60 * 6e4;
   var GUEST_BADGE_MAX = 999;
   var GUEST_FRAME_HEIGHT_MAX = 1e4;
   var GUEST_RESOLVE_ERROR_MAX = 500;
@@ -213,6 +224,8 @@
     "NO_INTEGRATION",
     "NO_SERVICE",
     "SERVICE_FAILED",
+    "REQUEST_FAILED",
+    "RESPONSE_TOO_LARGE",
     "NO_SESSION",
     "SESSION_BUSY",
     "NOT_GRANTED",
@@ -343,7 +356,8 @@
     "popover-closed",
     "file-open",
     "file-snapshot",
-    "file-saved"
+    "file-saved",
+    "generate-late"
   ]);
   var asWireRecord = (data) => Object(data) === data ? data : null;
   var isNonEmptyString = (value) => String(value) === value && value.length > 0;
@@ -428,6 +442,8 @@
     const itemListeners = /* @__PURE__ */ new Set();
     const statusControlListeners = /* @__PURE__ */ new Set();
     const popoverClosedListeners = /* @__PURE__ */ new Set();
+    const lateGenerateListeners = /* @__PURE__ */ new Set();
+    const unclaimedLateGenerate = [];
     let resolveHandler = null;
     let actionHandler = null;
     const fileOpenListeners = /* @__PURE__ */ new Set();
@@ -455,6 +471,11 @@
     };
     const post = (message) => {
       target.parent.postMessage(message, "*");
+    };
+    const listenForLateGenerate = () => {
+      if (disposed || target.parent === target || lateGenerateListeners.size === 0 || lastReady?.features?.lateGenerateResults !== true)
+        return;
+      post({ channel: OPENCHAMBER_SDK_CHANNEL, v: OPENCHAMBER_SDK_API_VERSION, type: "generate-late-listen" });
     };
     const emit = (listeners, value) => {
       for (const listener of listeners) {
@@ -497,6 +518,14 @@
         emit(connectionListeners, message.payload.connection);
         emit(settingsListeners, message.payload.settings);
         emit(itemListeners, message.payload.item);
+        listenForLateGenerate();
+        return;
+      }
+      if (message.type === "generate-late") {
+        if (lateGenerateListeners.size === 0)
+          unclaimedLateGenerate.push(message.payload);
+        else
+          emit(lateGenerateListeners, message.payload);
         return;
       }
       if (message.type === "directory") {
@@ -1238,6 +1267,15 @@
           return result;
         });
       },
+      onLateGenerateResult: (listener) => {
+        lateGenerateListeners.add(listener);
+        for (const result of unclaimedLateGenerate.splice(0))
+          emit([listener], result);
+        listenForLateGenerate();
+        return () => {
+          lateGenerateListeners.delete(listener);
+        };
+      },
       setBadge: (count) => request({
         channel: OPENCHAMBER_SDK_CHANNEL,
         v: OPENCHAMBER_SDK_API_VERSION,
@@ -1318,6 +1356,8 @@
         itemListeners.clear();
         statusControlListeners.clear();
         popoverClosedListeners.clear();
+        lateGenerateListeners.clear();
+        unclaimedLateGenerate.length = 0;
       }
     };
   };
@@ -1328,15 +1368,20 @@
     "browser.snapshot",
     "browser.click",
     "browser.type",
+    "browser.select",
     "browser.scroll",
     "browser.back",
     "browser.forward",
     "browser.inspect",
     "browser.capture",
-    "browser.resize"
+    "browser.resize",
+    "browser.close"
   ];
   var BROWSER_PROVIDER_IDLE_MS = 10 * 6e4;
   var CONTROL_ACTIONS = new Set(BROWSER_CONTROL_ACTIONS);
+  var SOURCE_CONTROL_PROVIDER_IDLE_MS = 10 * 6e4;
+  var NOTIFICATIONS_PROVIDER_IDLE_MS = 10 * 6e4;
+  var TRACKER_PROVIDER_IDLE_MS = 10 * 6e4;
 
   // node_modules/@openchamber/sdk/dist/service-surface.js
   var SURFACE_CONTROLLERS = ["none", "agent", "user"];

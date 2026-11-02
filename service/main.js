@@ -227,14 +227,15 @@ function loadMeta(db, schema) {
   const meta = /* @__PURE__ */ new Map();
   const children = /* @__PURE__ */ new Map();
   const sessions = db.prepare(
-    schema === "v2" ? "SELECT id, parent_id AS parentId, title, time_created AS created, directory FROM session_v2" : "SELECT id, parent_id AS parentId, title, time_created AS created, directory FROM session"
+    schema === "v2" ? "SELECT id, parent_id AS parentId, title, time_created AS created, directory, time_viewed AS viewed FROM session_v2" : "SELECT id, parent_id AS parentId, title, time_created AS created, directory, 0 AS viewed FROM session"
   ).all();
   for (const s of sessions) {
     meta.set(String(s.id), {
       parentId: s.parentId ? String(s.parentId) : null,
       title: String(s.title ?? ""),
       created: num(s.created),
-      directory: String(s.directory ?? "")
+      directory: String(s.directory ?? ""),
+      viewed: num(s.viewed)
     });
   }
   for (const [id, m] of meta) {
@@ -788,17 +789,20 @@ function latestSessionInDirectory(data, directory) {
     if (row.ts > prev) lastByRoot.set(root, row.ts);
   }
   let bestId = null;
-  let bestTs = -1;
+  let bestScore = -1;
   for (const [id, meta] of data.meta) {
     if (meta.parentId) continue;
     if (normalizeDir(meta.directory) !== dir) continue;
-    const ts = lastByRoot.get(id) ?? 0;
-    if (ts > bestTs) {
-      bestTs = ts;
+    const score = Math.max(meta.viewed, lastByRoot.get(id) ?? 0);
+    if (score > bestScore) {
+      bestScore = score;
       bestId = id;
     }
   }
-  return bestId ? aggregateSession(data, bestId) : null;
+  if (!bestId) return null;
+  const agg = aggregateSession(data, bestId);
+  if (!agg) return null;
+  return { agg, title: data.meta.get(bestId)?.title ?? bestId };
 }
 async function buildStatusView(locale, directory) {
   const zh = String(locale ?? "").toLowerCase().startsWith("zh");
@@ -822,12 +826,12 @@ async function buildStatusView(locale, directory) {
       id: "session",
       label: text.session,
       icon: "chat-3",
-      value: fmtCny(session.official),
-      tooltip: text.sessionTip(
-        fmtCny(session.main.official),
-        fmtCny(session.children.official),
-        fmtInt(session.requests)
-      )
+      value: fmtCny(session.agg.official),
+      tooltip: `${text.sessionTip(
+        fmtCny(session.agg.main.official),
+        fmtCny(session.agg.children.official),
+        fmtInt(session.agg.requests)
+      )}${session.title ? ` \xB7 ${session.title}` : ""}`
     });
   }
   rows.push({

@@ -247,6 +247,7 @@ interface SessionMetaRow {
   title: string;
   created: number;
   directory: string;
+  viewed: number;
 }
 
 interface UsageData {
@@ -353,8 +354,8 @@ function loadMeta(
   const sessions = db
     .prepare(
       schema === 'v2'
-        ? 'SELECT id, parent_id AS parentId, title, time_created AS created, directory FROM session_v2'
-        : 'SELECT id, parent_id AS parentId, title, time_created AS created, directory FROM session',
+        ? 'SELECT id, parent_id AS parentId, title, time_created AS created, directory, time_viewed AS viewed FROM session_v2'
+        : 'SELECT id, parent_id AS parentId, title, time_created AS created, directory, 0 AS viewed FROM session',
     )
     .all() as Array<Record<string, unknown>>;
   for (const s of sessions) {
@@ -363,6 +364,7 @@ function loadMeta(
       title: String(s.title ?? ''),
       created: num(s.created),
       directory: String(s.directory ?? ''),
+      viewed: num(s.viewed),
     });
   }
   for (const [id, m] of meta) {
@@ -1097,8 +1099,11 @@ function rootOfSession(data: UsageData, sessionId: string): string {
   return sid;
 }
 
-/** source 模式拿不到 session id，只能按目录内「最近活动」推断当前会话 */
-function latestSessionInDirectory(data: UsageData, directory: string): SessionAgg | null {
+/** source 模式拿不到 session id；用「最近查看时间」优先，回退到目录内最近消息活动 */
+function latestSessionInDirectory(
+  data: UsageData,
+  directory: string,
+): { agg: SessionAgg; title: string } | null {
   const dir = normalizeDir(directory);
   if (!dir) return null;
 
@@ -1110,17 +1115,21 @@ function latestSessionInDirectory(data: UsageData, directory: string): SessionAg
   }
 
   let bestId: string | null = null;
-  let bestTs = -1;
+  let bestScore = -1;
   for (const [id, meta] of data.meta) {
     if (meta.parentId) continue;
     if (normalizeDir(meta.directory) !== dir) continue;
-    const ts = lastByRoot.get(id) ?? 0;
-    if (ts > bestTs) {
-      bestTs = ts;
+    const score = Math.max(meta.viewed, lastByRoot.get(id) ?? 0);
+    if (score > bestScore) {
+      bestScore = score;
       bestId = id;
     }
   }
-  return bestId ? aggregateSession(data, bestId) : null;
+  if (!bestId) return null;
+
+  const agg = aggregateSession(data, bestId);
+  if (!agg) return null;
+  return { agg, title: data.meta.get(bestId)?.title ?? bestId };
 }
 
 async function buildStatusView(locale: string | null, directory: string | null): Promise<GuestStatusView> {
@@ -1149,12 +1158,12 @@ async function buildStatusView(locale: string | null, directory: string | null):
       id: 'session',
       label: text.session,
       icon: 'chat-3',
-      value: fmtCny(session.official),
-      tooltip: text.sessionTip(
-        fmtCny(session.main.official),
-        fmtCny(session.children.official),
-        fmtInt(session.requests),
-      ),
+      value: fmtCny(session.agg.official),
+      tooltip: `${text.sessionTip(
+        fmtCny(session.agg.main.official),
+        fmtCny(session.agg.children.official),
+        fmtInt(session.agg.requests),
+      )}${session.title ? ` · ${session.title}` : ''}`,
     });
   }
 

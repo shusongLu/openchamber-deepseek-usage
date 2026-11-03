@@ -22,6 +22,9 @@ function tierOf(model) {
   if (!m.startsWith("deepseek")) return null;
   return m.includes("pro") ? "pro" : "flash";
 }
+function isBilledProvider(provider) {
+  return !provider || provider.toLowerCase().startsWith("deep");
+}
 function isPeak(date) {
   const day = date.getUTCDay();
   if (day === 0 || day === 6) return false;
@@ -195,7 +198,9 @@ var ROW_SELECT_V2 = `SELECT id,
         json_extract(data,'$.cost') AS cost
  FROM session_message
  WHERE type = 'assistant'
-   AND json_extract(data,'$.model.id') LIKE 'deepseek%'`;
+   AND json_extract(data,'$.model.id') LIKE 'deepseek%'
+   -- \u53EA\u7EDF\u8BA1\u4ED8\u8D39 DeepSeek \u63A5\u53E3\u7684\u8C03\u7528\uFF1A\u540C\u65CF\u6A21\u578B\u8D70\u522B\u7684\u901A\u9053\uFF08opencode \u514D\u8D39\u989D\u5EA6 deepseek-v4.1-flash-free\uFF09\u4E0D\u8BA1\u8D39\uFF0C\u4E5F\u4E0D\u8FDB\u9762\u677F
+   AND COALESCE(json_extract(data,'$.model.providerID'), 'deepseek') LIKE 'deep%'`;
 var ROW_SELECT_V1 = `SELECT id,
         session_id AS sid,
         time_created AS ts,
@@ -209,7 +214,9 @@ var ROW_SELECT_V1 = `SELECT id,
         json_extract(data,'$.cost') AS cost
  FROM message
  WHERE json_extract(data,'$.role') = 'assistant'
-   AND json_extract(data,'$.modelID') LIKE 'deepseek%'`;
+   AND json_extract(data,'$.modelID') LIKE 'deepseek%'
+   -- \u540C\u4E0A\uFF1A\u514D\u8D39\u989D\u5EA6\u6A21\u578B\u540C\u65CF\u4F46\u4E0D\u8BA1\u8D39
+   AND COALESCE(json_extract(data,'$.providerID'), 'deepseek') LIKE 'deep%'`;
 function loadRows(db, schema, sinceMs) {
   const base = schema === "v2" ? ROW_SELECT_V2 : ROW_SELECT_V1;
   const useSince = typeof sinceMs === "number" && sinceMs > 0;
@@ -558,7 +565,7 @@ function findMessageOnce(dbPath, id) {
       ).get(id);
       if (!row2) return null;
       const parsed2 = rowToUsage(row2);
-      return parsed2.model ? parsed2 : null;
+      return parsed2.model && isBilledProvider(parsed2.provider) ? parsed2 : null;
     }
     const row = db.prepare(
       `SELECT id,
@@ -577,7 +584,7 @@ function findMessageOnce(dbPath, id) {
     ).get(id);
     if (!row) return null;
     const parsed = rowToUsage(row);
-    return parsed.model ? parsed : null;
+    return parsed.model && isBilledProvider(parsed.provider) ? parsed : null;
   } finally {
     db.close();
   }

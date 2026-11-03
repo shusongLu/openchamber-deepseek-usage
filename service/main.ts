@@ -58,6 +58,11 @@ function tierOf(model: string): Tier | null {
   return m.includes('pro') ? 'pro' : 'flash';
 }
 
+/** 是否付费 DeepSeek 接口的调用：同族模型若走别的通道（如 opencode 免费额度 deepseek-v4.1-flash-free）不计费 */
+function isBilledProvider(provider: string | null): boolean {
+  return !provider || provider.toLowerCase().startsWith('deep');
+}
+
 function isPeak(date: Date): boolean {
   const day = date.getUTCDay();
   if (day === 0 || day === 6) return false;
@@ -313,7 +318,9 @@ const ROW_SELECT_V2 = `SELECT id,
         json_extract(data,'$.cost') AS cost
  FROM session_message
  WHERE type = 'assistant'
-   AND json_extract(data,'$.model.id') LIKE 'deepseek%'`;
+   AND json_extract(data,'$.model.id') LIKE 'deepseek%'
+   -- 只统计付费 DeepSeek 接口的调用：同族模型走别的通道（opencode 免费额度 deepseek-v4.1-flash-free）不计费，也不进面板
+   AND COALESCE(json_extract(data,'$.model.providerID'), 'deepseek') LIKE 'deep%'`;
 
 const ROW_SELECT_V1 = `SELECT id,
         session_id AS sid,
@@ -328,7 +335,9 @@ const ROW_SELECT_V1 = `SELECT id,
         json_extract(data,'$.cost') AS cost
  FROM message
  WHERE json_extract(data,'$.role') = 'assistant'
-   AND json_extract(data,'$.modelID') LIKE 'deepseek%'`;
+   AND json_extract(data,'$.modelID') LIKE 'deepseek%'
+   -- 同上：免费额度模型同族但不计费
+   AND COALESCE(json_extract(data,'$.providerID'), 'deepseek') LIKE 'deep%'`;
 
 /** 读取 DeepSeek 助手消息；sinceMs 走 time_created 索引只取新窗口 */
 function loadRows(db: DatabaseSync, schema: SchemaKind, sinceMs?: number): UsageRow[] {
@@ -834,7 +843,7 @@ function findMessageOnce(dbPath: string, id: string): UsageRow | null {
         .get(id) as Record<string, unknown> | undefined;
       if (!row) return null;
       const parsed = rowToUsage(row);
-      return parsed.model ? parsed : null;
+      return parsed.model && isBilledProvider(parsed.provider) ? parsed : null;
     }
     const row = db
       .prepare(
@@ -855,7 +864,7 @@ function findMessageOnce(dbPath: string, id: string): UsageRow | null {
       .get(id) as Record<string, unknown> | undefined;
     if (!row) return null;
     const parsed = rowToUsage(row);
-    return parsed.model ? parsed : null;
+    return parsed.model && isBilledProvider(parsed.provider) ? parsed : null;
   } finally {
     db.close();
   }

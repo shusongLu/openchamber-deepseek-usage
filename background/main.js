@@ -1400,6 +1400,7 @@
       price: (cny, peak) => `\u5B98\u65B9\u4EF7 ${cny}\uFF08${peak ? "\u5CF0\u65F6" : "\u8C37\u65F6"}\uFF09`,
       tokens: (input, cache, output) => `\u8F93\u5165 ${input} \xB7 \u7F13\u5B58\u547D\u4E2D ${cache} \xB7 \u8F93\u51FA ${output}`,
       recorded: (cny) => `OpenCode \u8BB0\u8D26 ${cny}`,
+      notBilled: "\u8FD9\u6761\u4E0D\u662F\u4ED8\u8D39 DeepSeek \u8C03\u7528\uFF0C\u514D\u8D39\u989D\u5EA6\u6A21\u578B\u4E0D\u8BA1\u8D39\u3002",
       failed: (msg) => `\u67E5\u8BE2\u5931\u8D25\uFF1A${msg}`
     },
     en: {
@@ -1408,6 +1409,7 @@
       price: (cny, peak) => `official ${cny} (${peak ? "peak" : "off-peak"})`,
       tokens: (input, cache, output) => `input ${input} \xB7 cache hit ${cache} \xB7 output ${output}`,
       recorded: (cny) => `OpenCode recorded ${cny}`,
+      notBilled: "This message is not a billed DeepSeek call (free-tier models are free).",
       failed: (msg) => `Request failed: ${msg}`
     }
   };
@@ -1436,7 +1438,8 @@
       const res = await host.serviceRequest({ method: "GET", path: "/message", query: { id: item.messageId } });
       const data = JSON.parse(res.body);
       if (!data.ok || !data.tokens) {
-        await host.toast({ kind: "error", message: t.failed(data.error ?? `HTTP ${res.status}`), dismiss: true });
+        const message = data.error === "not-deepseek" ? t.notBilled : t.failed(data.error ?? `HTTP ${res.status}`);
+        await host.toast({ kind: "error", message, dismiss: true });
         return;
       }
       const tokens = data.tokens;

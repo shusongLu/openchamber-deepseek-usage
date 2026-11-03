@@ -21,6 +21,7 @@ const L = {
     price: (cny: string, peak: boolean) => `官方价 ${cny}（${peak ? '峰时' : '谷时'}）`,
     tokens: (input: string, cache: string, output: string) => `输入 ${input} · 缓存命中 ${cache} · 输出 ${output}`,
     recorded: (cny: string) => `OpenCode 记账 ${cny}`,
+    notBilled: '这条不是付费 DeepSeek 调用，免费额度模型不计费。',
     failed: (msg: string) => `查询失败：${msg}`,
   },
   en: {
@@ -29,6 +30,7 @@ const L = {
     price: (cny: string, peak: boolean) => `official ${cny} (${peak ? 'peak' : 'off-peak'})`,
     tokens: (input: string, cache: string, output: string) => `input ${input} · cache hit ${cache} · output ${output}`,
     recorded: (cny: string) => `OpenCode recorded ${cny}`,
+    notBilled: 'This message is not a billed DeepSeek call (free-tier models are free).',
     failed: (msg: string) => `Request failed: ${msg}`,
   },
 } as const;
@@ -73,7 +75,8 @@ host.onAction(async (item) => {
     const res = await host.serviceRequest({ method: 'GET', path: '/message', query: { id: item.messageId } });
     const data = JSON.parse(res.body) as MessageUsage;
     if (!data.ok || !data.tokens) {
-      await host.toast({ kind: 'error', message: t.failed(data.error ?? `HTTP ${res.status}`), dismiss: true });
+      const message = data.error === 'not-deepseek' ? t.notBilled : t.failed(data.error ?? `HTTP ${res.status}`);
+      await host.toast({ kind: 'error', message, dismiss: true });
       return;
     }
 
